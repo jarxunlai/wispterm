@@ -44,6 +44,19 @@ English | [简体中文](README.zh-CN.md)
 - **Kitty Graphics protocol** - display inline images and PDFs from remote shells via `imgcat.py` / `pdfcat.py`
 - **Opt-in remote access** - share a session key over a Cloudflare-hosted relay (disabled by default)
 
+## Architecture
+
+[![WispTerm architecture: native hosts, shared Zig application and terminal core, platform services, and optional web remote](docs/assets/wispterm-architecture.svg)](docs/assets/wispterm-architecture.svg)
+
+WispTerm follows [Ghostty's core/runtime separation](https://github.com/ghostty-org/ghostty/blob/main/src/apprt.zig):
+native hosts provide windows and events, while shared Zig code coordinates the
+workspace and terminal sessions. **libghostty-vt** provides VT parsing and terminal
+state; WispTerm owns the rendering pipeline and workspace features. The optional
+Remote console connects through a relay and uses xterm.js in the browser.
+
+See the [architecture and host contract](docs/architecture.md) for module boundaries
+and the [Remote guide](remote/README.md) for the web console and relay.
+
 ## Documentation
 
 - [Configuration](docs/configuration.md)
