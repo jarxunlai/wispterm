@@ -2579,12 +2579,19 @@ pub fn scrollbarForSurfaceLocked(surface: *Surface) ScrollbarState {
     };
 }
 
+/// Window-pixel origin of the surface's drawn cell grid (see
+/// `split_layout.gridOrigin`), or null when the surface has no live rect.
+fn surfaceGridOrigin(surface: *Surface) ?split_layout.GridOrigin {
+    const rect = splitRectForSurface(surface) orelse return null;
+    const single_pane = split_layout.soleTerminalSurface() == surface;
+    return split_layout.gridOrigin(rect, surface.getPadding(), single_pane);
+}
+
 /// Convert a window mouse position to a cell in the clicked split surface.
 fn mouseToSurfaceCell(surface: *Surface, xpos: f64, ypos: f64) CellPos {
-    const rect = splitRectForSurface(surface) orelse return mouseToCell(xpos, ypos);
-    const pad = surface.getPadding();
-    const col_f = (xpos - @as(f64, @floatFromInt(rect.x)) - @as(f64, @floatFromInt(pad.left))) / @as(f64, @floatCast(font.cell_width));
-    const row_f = (ypos - @as(f64, @floatFromInt(rect.y)) - @as(f64, @floatFromInt(pad.top))) / @as(f64, @floatCast(font.cell_height));
+    const origin = surfaceGridOrigin(surface) orelse return mouseToCell(xpos, ypos);
+    const col_f = (xpos - @as(f64, @floatFromInt(origin.x))) / @as(f64, @floatCast(font.cell_width));
+    const row_f = (ypos - @as(f64, @floatFromInt(origin.y))) / @as(f64, @floatCast(font.cell_height));
     const cols = @max(@as(usize, 1), @as(usize, @intCast(surface.size.grid.cols)));
     const rows = @max(@as(usize, 1), @as(usize, @intCast(surface.size.grid.rows)));
 
@@ -2595,11 +2602,10 @@ fn mouseToSurfaceCell(surface: *Surface, xpos: f64, ypos: f64) CellPos {
 }
 
 fn mouseToSurfacePixel(surface: *Surface, xpos: i32, ypos: i32) struct { x: i32, y: i32 } {
-    if (splitRectForSurface(surface)) |rect| {
-        const pad = surface.getPadding();
+    if (surfaceGridOrigin(surface)) |origin| {
         return .{
-            .x = xpos - rect.x - @as(i32, @intCast(pad.left)),
-            .y = ypos - rect.y - @as(i32, @intCast(pad.top)),
+            .x = xpos - origin.x,
+            .y = ypos - origin.y,
         };
     }
     return .{
