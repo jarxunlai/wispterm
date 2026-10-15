@@ -6255,13 +6255,14 @@ fn maybePrintMemoryDebug(now: i64) void {
         totals.kitty_pending_cpu_bytes;
 
     std.debug.print(
-        "[memory] font glyphs={} graphemes={} titlebar={} icons={} fallback_faces={} no_fallback={} hb_fallback={} atlas(text/color/icon/titlebar)={}x{}/{}x{}/{}x{}/{}x{} font_atlas(cpu/gpu)={d:.1}/{d:.1}MiB\n",
+        "[memory] font glyphs={} graphemes={} titlebar={} icons={} fallback_faces={} fallback_cps={} no_fallback={} hb_fallback={} atlas(text/color/icon/titlebar)={}x{}/{}x{}/{}x{}/{}x{} font_atlas(cpu/gpu)={d:.1}/{d:.1}MiB\n",
         .{
             font_stats.glyphs,
             font_stats.graphemes,
             font_stats.titlebar_glyphs,
             font_stats.icons,
             font_stats.fallback_faces,
+            font_stats.fallback_codepoints,
             font_stats.no_fallback_entries,
             font_stats.hb_fallback_fonts,
             font_stats.atlas_size,

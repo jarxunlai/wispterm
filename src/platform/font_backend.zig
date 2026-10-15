@@ -85,6 +85,14 @@ pub fn fontDataAlloc(allocator: std.mem.Allocator, font: *FallbackFont) ?[]u8 {
     return impl.fontDataAlloc(allocator, font);
 }
 
+/// PostScript name of a discovered font, when the backend exposes it (macOS
+/// CoreText). Unlike the file path it distinguishes faces inside one .ttc, so
+/// the font manager prefers it as the fallback-font identity. Caller owns the
+/// returned slice.
+pub fn fontPostScriptNameAlloc(allocator: std.mem.Allocator, font: *FallbackFont) ?[]u8 {
+    return impl.fontPostScriptNameAlloc(allocator, font);
+}
+
 test "platform font backend exposes discovery and weight APIs" {
     _ = FontDiscovery;
     _ = LoadedFont;
@@ -92,6 +100,7 @@ test "platform font backend exposes discovery and weight APIs" {
     _ = FontFilePath;
     try std.testing.expect(@hasDecl(@This(), "fontFilePathAlloc"));
     try std.testing.expect(@hasDecl(@This(), "fontDataAlloc"));
+    try std.testing.expect(@hasDecl(@This(), "fontPostScriptNameAlloc"));
     try std.testing.expectEqual(FontWeight.BOLD, fontWeightFromValue(700));
     try std.testing.expectEqual(FontWeight.NORMAL, fontWeightFromValue(123));
 }

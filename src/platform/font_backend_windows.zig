@@ -85,3 +85,10 @@ pub fn fontDataAlloc(allocator: std.mem.Allocator, font: *FallbackFont) ?[]u8 {
     _ = font;
     return null;
 }
+
+pub fn fontPostScriptNameAlloc(allocator: std.mem.Allocator, font: *FallbackFont) ?[]u8 {
+    // File path + face index already identifies a font uniquely here.
+    _ = allocator;
+    _ = font;
+    return null;
+}
