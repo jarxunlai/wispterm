@@ -58,7 +58,7 @@ tested passes.
 
 ## macOS
 
-- **1.40.5 and earlier leak memory on macOS (fixed after 1.40.5).** WispTerm
+- **1.40.5 and earlier leak memory on macOS (fixed in 1.40.6).** WispTerm
   does not start through `NSApplicationMain`, so no thread had an outer
   autorelease pool, and AppKit objects autoreleased outside an explicit
   `@autoreleasepool` were never freed. The largest source was
