@@ -45,3 +45,7 @@ pub fn fontFilePathAlloc(allocator: std.mem.Allocator, font: *FallbackFont) ?Fon
 pub fn fontDataAlloc(allocator: std.mem.Allocator, font: *FallbackFont) ?[]u8 {
     return font_discovery.fontDataAlloc(allocator, font);
 }
+
+pub fn fontPostScriptNameAlloc(allocator: std.mem.Allocator, font: *FallbackFont) ?[]u8 {
+    return font_discovery.fontPostScriptNameAlloc(allocator, font);
+}

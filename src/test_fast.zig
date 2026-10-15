@@ -326,6 +326,7 @@ test {
     _ = @import("command/palette_model.zig");
     _ = @import("command/center_state.zig");
     _ = @import("command/palette_history_view.zig");
+    _ = @import("font/fallback_cache.zig");
     _ = @import("recipe/store.zig");
     _ = @import("recipe/form_state.zig");
     _ = @import("platform/window_state_codec.zig");

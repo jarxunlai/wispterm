@@ -9,6 +9,7 @@ const builtin = @import("builtin");
 const freetype = @import("freetype");
 const harfbuzz = @import("harfbuzz");
 const sprite = @import("sprite.zig");
+const fallback_cache = @import("fallback_cache.zig");
 const platform_display = @import("../platform/display.zig");
 const font_backend = @import("../platform/font_backend.zig");
 const embedded = @import("embedded.zig");
@@ -117,9 +118,9 @@ pub threadlocal var g_titlebar_baseline: f32 = 3;
 // Font fallback system
 pub threadlocal var g_ft_lib: ?freetype.Library = null;
 pub threadlocal var g_font_discovery: ?*font_backend.FontDiscovery = null;
-pub threadlocal var g_fallback_faces: std.AutoHashMapUnmanaged(u32, freetype.Face) = .empty; // codepoint -> fallback face
-pub threadlocal var g_no_fallback: std.AutoHashMapUnmanaged(u32, void) = .empty; // codepoints with no fallback (negative cache)
-pub threadlocal var g_fallback_font_data: std.ArrayListUnmanaged([]u8) = .empty; // backing memory for initMemoryFace fallbacks (must outlive the faces)
+/// Fallback fonts, each loaded once, plus the codepoint -> font index map and
+/// the negative cache. See fallback_cache.zig.
+pub threadlocal var g_fallback_fonts: fallback_cache.FallbackCache(LoadedFallback) = .{};
 pub threadlocal var g_font_size: u32 = DEFAULT_FONT_SIZE;
 pub threadlocal var g_dpi: u32 = platform_display.default_dpi;
 pub threadlocal var g_cjk_font_family: ?[]const u8 = null;
@@ -186,7 +187,6 @@ test "fallback family setters truncate values longer than their buffers" {
 // HarfBuzz shaping state
 pub threadlocal var g_hb_buf: ?harfbuzz.Buffer = null;
 pub threadlocal var g_hb_font: ?harfbuzz.Font = null; // HB font for primary face
-pub threadlocal var g_hb_fallback_fonts: std.AutoHashMapUnmanaged(u32, harfbuzz.Font) = .empty; // codepoint -> HB font for fallback faces
 
 // Bell emoji
 pub threadlocal var g_bell_cache: ?BellCache = null;
@@ -482,16 +482,20 @@ fn findConfiguredFallbackFont(discovery: *font_backend.FontDiscovery, codepoint:
     return null;
 }
 
-fn fallbackScaleFactor(primary: freetype.Face, fallback: freetype.Face, codepoint: u32) f64 {
+/// Size adjustment for a whole fallback face (Ghostty's default `ic_width`
+/// fallback adjustment): computed from face metrics only, since one face now
+/// serves every codepoint it covers.
+fn fallbackScaleFactor(primary: freetype.Face, fallback: freetype.Face) f64 {
     const primary_metrics = measureFaceMetrics(primary);
     const fallback_metrics = measureFaceMetrics(fallback);
-
-    const raw = if (isCjkCodepoint(codepoint))
-        primary_metrics.ic_width / @max(0.01, fallback_metrics.ic_width)
-    else
-        primary_metrics.ex_height / @max(0.01, fallback_metrics.ex_height);
-
-    return std.math.clamp(raw, 0.75, 1.35);
+    const fallback_has_ideograph = (fallback.getCharIndex(0x6C34) orelse 0) != 0;
+    return fallback_cache.sizeAdjustRatio(
+        primary_metrics.ic_width,
+        primary_metrics.ex_height,
+        fallback_metrics.ic_width,
+        fallback_metrics.ex_height,
+        fallback_has_ideograph,
+    );
 }
 
 fn glyphTargetForCodepoint(codepoint: u32) freetype.LoadFlags.Target {
@@ -963,21 +967,11 @@ pub fn loadGraphemeGlyph(base_cp: u21, extra_cps: []const u21) ?Character {
     var glyph_infos: []harfbuzz.GlyphInfo = &.{};
     var tried_fallback = false;
 
-    if (findOrLoadFallbackFace(@intCast(base_cp), alloc)) |fallback_face| {
+    if (findOrLoadFallback(@intCast(base_cp), alloc)) |fallback_index| {
+        const fallback_face = g_fallback_fonts.at(fallback_index).font.face;
         if (fallback_face.hasColor()) {
             // Emoji/color font — try this first for grapheme clusters
-            const fb_hb_font = g_hb_fallback_fonts.get(@intCast(base_cp)) orelse blk: {
-                const new_hb = harfbuzz.freetype.createFont(fallback_face.handle) catch null;
-                if (new_hb) |hf| {
-                    g_hb_fallback_fonts.put(alloc, @intCast(base_cp), hf) catch {
-                        var f = hf;
-                        f.destroy();
-                        break :blk null;
-                    };
-                    break :blk hf;
-                }
-                break :blk null;
-            };
+            const fb_hb_font = fallbackHbFont(fallback_index);
 
             if (fb_hb_font) |fb_font| {
                 hb_buf.reset();
@@ -1011,19 +1005,9 @@ pub fn loadGraphemeGlyph(base_cp: u21, extra_cps: []const u21) ?Character {
 
         // If primary also failed, try non-color fallback
         if (!tried_fallback and (glyph_infos.len == 0 or glyph_infos[0].codepoint == 0)) {
-            if (findOrLoadFallbackFace(@intCast(base_cp), alloc)) |fallback_face| {
-                const fb_hb_font = g_hb_fallback_fonts.get(@intCast(base_cp)) orelse blk: {
-                    const new_hb = harfbuzz.freetype.createFont(fallback_face.handle) catch null;
-                    if (new_hb) |hf| {
-                        g_hb_fallback_fonts.put(alloc, @intCast(base_cp), hf) catch {
-                            var f = hf;
-                            f.destroy();
-                            break :blk null;
-                        };
-                        break :blk hf;
-                    }
-                    break :blk null;
-                };
+            if (findOrLoadFallback(@intCast(base_cp), alloc)) |fallback_index| {
+                const fallback_face = g_fallback_fonts.at(fallback_index).font.face;
+                const fb_hb_font = fallbackHbFont(fallback_index);
 
                 if (fb_hb_font) |fb_font| {
                     hb_buf.reset();
@@ -1331,7 +1315,34 @@ pub fn loadBellEmoji() ?BellCache {
 // Font fallback
 // ============================================================================
 
-/// Find or load a fallback font that contains the given codepoint
+/// A loaded fallback font: one FreeType face (sized once for the whole face),
+/// its lazily created HarfBuzz font, and — for memory-loaded faces — the sfnt
+/// bytes FreeType borrows, which must outlive the face.
+pub const LoadedFallback = struct {
+    face: freetype.Face,
+    hb_font: ?harfbuzz.Font = null,
+    data: ?[]u8 = null,
+
+    pub fn hasCodepoint(self: *const LoadedFallback, codepoint: u32) bool {
+        return (self.face.getCharIndex(codepoint) orelse 0) != 0;
+    }
+
+    pub fn deinit(self: *LoadedFallback, allocator: std.mem.Allocator) void {
+        // The HarfBuzz font references the FreeType face, and FreeType
+        // borrows the sfnt buffer: release in that order.
+        if (self.hb_font) |*hf| hf.destroy();
+        self.face.deinit();
+        if (self.data) |data| allocator.free(data);
+        self.* = undefined;
+    }
+};
+
+const OpenedFallbackFace = struct {
+    face: freetype.Face,
+    /// Owned sfnt copy backing a memory-loaded face; null for path loads.
+    data: ?[]u8 = null,
+};
+
 /// Resolve a FallbackFont to a FreeType face, verifying FreeType can actually
 /// load it AND that the face contains `codepoint`. Returns null (after cleaning
 /// up) if either check fails, so callers can try the next candidate.
@@ -1342,21 +1353,20 @@ pub fn loadBellEmoji() ?BellCache {
 /// the cheap path-based load, then — when that fails — pull the font's sfnt
 /// bytes straight from the backend (CoreText tables) and load them from memory,
 /// which works regardless of file accessibility. The memory buffer must outlive
-/// the face, so it is tracked in g_fallback_font_data and freed in
-/// clearFallbackFaces.
+/// the face, so it is returned to the caller and kept on the LoadedFallback.
 fn openFallbackFreetypeFace(
     ft_lib: freetype.Library,
     font: *font_backend.FallbackFont,
     codepoint: u32,
     alloc: std.mem.Allocator,
-) ?freetype.Face {
+) ?OpenedFallbackFace {
     // 1. Cheap path: open by file path (no data copy). Works for ordinary
     //    user/system fonts that resolve to a readable file.
     if (font_backend.fontFilePathAlloc(alloc, font)) |path_result| {
         var font_path = path_result;
         defer font_path.deinit();
         if (ft_lib.initFace(font_path.path, @intCast(font_path.face_index))) |ft_face| {
-            if ((ft_face.getCharIndex(codepoint) orelse 0) != 0) return ft_face;
+            if ((ft_face.getCharIndex(codepoint) orelse 0) != 0) return .{ .face = ft_face };
             ft_face.deinit();
         } else |_| {}
     }
@@ -1374,80 +1384,28 @@ fn openFallbackFreetypeFace(
         alloc.free(data);
         return null;
     }
-    g_fallback_font_data.append(alloc, data) catch {
-        ft_face.deinit();
-        alloc.free(data);
-        return null;
-    };
-    return ft_face;
+    return .{ .face = ft_face, .data = data };
 }
 
-/// Try each family in order; return the first one FreeType can load with a
-/// glyph for `codepoint`.
-fn tryFamiliesForFallback(
-    discovery: *font_backend.FontDiscovery,
-    ft_lib: freetype.Library,
-    codepoint: u32,
-    families: []const []const u8,
-    alloc: std.mem.Allocator,
-) ?freetype.Face {
-    for (families) |family_name| {
-        const font = (discovery.findFont(family_name, .NORMAL, .NORMAL) catch null) orelse continue;
-        defer font.release();
-        if (!font.hasCharacter(codepoint)) continue;
-        if (openFallbackFreetypeFace(ft_lib, font, codepoint, alloc)) |face| return face;
+/// Identity of a discovered font, used to never load the same font twice.
+/// Computed without opening the font (no sfnt copy). Caller owns the result.
+fn fallbackFontIdentityAlloc(alloc: std.mem.Allocator, font: *font_backend.FallbackFont) ?[]u8 {
+    if (font_backend.fontPostScriptNameAlloc(alloc, font)) |name| {
+        defer alloc.free(name);
+        if (fallback_cache.formatIdentity(alloc, name, null, 0)) |id| return id;
     }
-    return null;
+    var path = font_backend.fontFilePathAlloc(alloc, font) orelse return null;
+    defer path.deinit();
+    return fallback_cache.formatIdentity(alloc, null, path.path, path.face_index);
 }
 
-pub fn findOrLoadFallbackFace(codepoint: u32, alloc: std.mem.Allocator) ?freetype.Face {
-    // Check if we already have a fallback for this codepoint
-    if (g_fallback_faces.get(codepoint)) |face| {
-        return face;
-    }
-
-    // Check negative cache - if we already know there's no fallback, skip system font lookup
-    if (g_no_fallback.contains(codepoint)) {
-        return null;
-    }
-
-    // Need system font discovery and FreeType library to find fallbacks
-    const discovery = g_font_discovery orelse return null;
-    const ft_lib = g_ft_lib orelse return null;
-
-    // Resolve a FreeType-loadable face, trying candidates in priority order.
-    // Each candidate is validated by actually opening it with FreeType (see
-    // openFallbackFreetypeFace) so an unloadable system-reserved font does not
-    // abort the whole lookup.
-    const ft_face: freetype.Face = blk: {
-        // 1. Explicit user configuration (cjk-font / fallback CSV).
-        if (findConfiguredFallbackFont(discovery, codepoint)) |font| {
-            defer font.release();
-            if (openFallbackFreetypeFace(ft_lib, font, codepoint, alloc)) |face| break :blk face;
-        }
-
-        // 2. Platform preferred families (FreeType-loadable system fonts).
-        const preferred = preferredFallbackFamilies(codepoint);
-        if (tryFamiliesForFallback(discovery, ft_lib, codepoint, preferred, alloc)) |face| break :blk face;
-
-        // 3. CoreText / platform default cascade as a last resort.
-        if (discovery.findFallbackFont(codepoint) catch null) |font| {
-            defer font.release();
-            if (openFallbackFreetypeFace(ft_lib, font, codepoint, alloc)) |face| break :blk face;
-        }
-
-        // Nothing usable — cache the negative result to avoid repeated queries.
-        g_no_fallback.put(alloc, codepoint, {}) catch {};
-        return null;
-    };
-
+/// Set a freshly opened fallback face's size, once for the whole face.
+/// Returns false if the face can't be sized (caller releases it).
+fn sizeFallbackFace(ft_face: freetype.Face) bool {
     // Start from the primary point size, then normalize fallback metrics to
     // the active terminal face. This follows Ghostty's overall approach of
     // making fallback fonts interchangeable rather than same-point-size only.
-    setFacePointSize(ft_face, g_font_size) catch {
-        ft_face.deinit();
-        return null;
-    };
+    setFacePointSize(ft_face, g_font_size) catch return false;
 
     if (ft_face.hasColor() and ft_face.hasFixedSizes()) {
         // Color bitmap fonts (Apple Color Emoji's sbix strikes, Noto CBDT,
@@ -1458,32 +1416,153 @@ pub fn findOrLoadFallbackFace(codepoint: u32, alloc: std.mem.Allocator) ?freetyp
         // appears blank. We must also skip the metric rescale below: its
         // FT_Set_Char_Size would unpin the strike again. The renderer scales
         // the BGRA bitmap down to cell height at draw time.
-        selectClosestFixedStrike(ft_face, g_font_size) catch {
-            ft_face.deinit();
-            return null;
-        };
+        selectClosestFixedStrike(ft_face, g_font_size) catch return false;
     } else if (glyph_face) |primary_face| {
-        const scale = fallbackScaleFactor(primary_face, ft_face, codepoint);
+        const scale = fallbackScaleFactor(primary_face, ft_face);
         if (@abs(scale - 1.0) > 0.01) {
             const scaled_size = @max(8.0, @round(@as(f64, @floatFromInt(g_font_size)) * scale));
             ft_face.setCharSize(0, @intFromFloat(scaled_size * 64.0), @intCast(g_dpi), @intCast(g_dpi)) catch {
                 // Non-color bitmap-only fallbacks can't be rescaled here; the
                 // strike already chosen in setFacePointSize stays in effect.
-                if (!ft_face.hasFixedSizes()) {
-                    ft_face.deinit();
-                    return null;
-                }
+                if (!ft_face.hasFixedSizes()) return false;
             };
         }
     }
+    return true;
+}
 
-    // Cache the fallback face for this codepoint
-    g_fallback_faces.put(alloc, codepoint, ft_face) catch {
-        ft_face.deinit();
+/// Turn a discovered candidate into a fallback-cache index: reuse the
+/// already-loaded copy when its identity matches (never open a second copy of
+/// a font), otherwise open, size and append it. Returns null when the
+/// candidate can't serve `codepoint`, so the caller tries the next one.
+fn useFallbackCandidate(
+    ft_lib: freetype.Library,
+    font: *font_backend.FallbackFont,
+    codepoint: u32,
+    configured: bool,
+    alloc: std.mem.Allocator,
+) ?fallback_cache.Index {
+    const identity = fallbackFontIdentityAlloc(alloc, font);
+    defer if (identity) |id| alloc.free(id);
+
+    if (identity) |id| {
+        if (g_fallback_fonts.findByIdentity(id)) |index| {
+            const entry = g_fallback_fonts.at(index);
+            if (!entry.font.hasCodepoint(codepoint)) return null;
+            if (configured) entry.configured = true;
+            return index;
+        }
+    }
+
+    const opened = openFallbackFreetypeFace(ft_lib, font, codepoint, alloc) orelse return null;
+    var loaded: LoadedFallback = .{ .face = opened.face, .data = opened.data };
+    if (!sizeFallbackFace(loaded.face)) {
+        loaded.deinit(alloc);
+        return null;
+    }
+    return g_fallback_fonts.add(alloc, loaded, identity, configured) catch {
+        loaded.deinit(alloc);
         return null;
     };
+}
 
-    return ft_face;
+/// Whether the user configured fallback families that apply to `codepoint`
+/// (cjk-font for CJK, or the fallback family CSV).
+fn hasConfiguredFallbackFamilies(codepoint: u32) bool {
+    if (isCjkCodepoint(codepoint)) {
+        if (g_cjk_font_family) |family| {
+            if (trimAsciiSpaces(family).len > 0) return true;
+        }
+    }
+    if (g_fallback_font_families) |csv| {
+        return std.mem.trim(u8, csv, " \t\r,").len > 0;
+    }
+    return false;
+}
+
+/// Pick the fallback font for `codepoint`, preferring fonts already loaded
+/// (like Ghostty's CodepointResolver: collection.getIndex before discovery).
+fn resolveFallback(
+    discovery: *font_backend.FontDiscovery,
+    ft_lib: freetype.Library,
+    codepoint: u32,
+    alloc: std.mem.Allocator,
+) ?fallback_cache.Index {
+    // 1. Explicit user configuration (cjk-font / fallback CSV) outranks any
+    //    other loaded fallback, so check configured fonts first.
+    if (hasConfiguredFallbackFamilies(codepoint)) {
+        if (g_fallback_fonts.findLoaded(codepoint, true)) |index| return index;
+        if (findConfiguredFallbackFont(discovery, codepoint)) |font| {
+            defer font.release();
+            if (useFallbackCandidate(ft_lib, font, codepoint, true, alloc)) |index| return index;
+        }
+    }
+
+    // 2. Any already-loaded fallback font that covers the codepoint.
+    if (g_fallback_fonts.findLoaded(codepoint, false)) |index| return index;
+
+    // 3. Platform preferred families (FreeType-loadable system fonts). Each
+    //    candidate is validated by actually opening it with FreeType (see
+    //    openFallbackFreetypeFace) so an unloadable system-reserved font does
+    //    not abort the whole lookup.
+    for (preferredFallbackFamilies(codepoint)) |family_name| {
+        const font = (discovery.findFont(family_name, .NORMAL, .NORMAL) catch null) orelse continue;
+        defer font.release();
+        if (!font.hasCharacter(codepoint)) continue;
+        if (useFallbackCandidate(ft_lib, font, codepoint, false, alloc)) |index| return index;
+    }
+
+    // 4. CoreText / platform default cascade as a last resort.
+    if (discovery.findFallbackFont(codepoint) catch null) |font| {
+        defer font.release();
+        if (useFallbackCandidate(ft_lib, font, codepoint, false, alloc)) |index| return index;
+    }
+
+    return null;
+}
+
+/// Find or load the fallback font for `codepoint`; returns its index in
+/// g_fallback_fonts. Each fallback font is loaded at most once and shared by
+/// every codepoint it covers.
+pub fn findOrLoadFallback(codepoint: u32, alloc: std.mem.Allocator) ?fallback_cache.Index {
+    if (g_fallback_fonts.lookup(codepoint)) |index| return index;
+
+    // Negative cache - if we already know there's no fallback, skip lookup.
+    if (g_fallback_fonts.isMissing(codepoint)) return null;
+
+    // Need system font discovery and FreeType library to find fallbacks
+    const discovery = g_font_discovery orelse return null;
+    const ft_lib = g_ft_lib orelse return null;
+
+    const index = resolveFallback(discovery, ft_lib, codepoint, alloc) orelse {
+        // Nothing usable — cache the negative result to avoid repeated queries.
+        g_fallback_fonts.markMissing(alloc, codepoint);
+        return null;
+    };
+    g_fallback_fonts.assign(alloc, codepoint, index) catch {};
+    return index;
+}
+
+pub fn findOrLoadFallbackFace(codepoint: u32, alloc: std.mem.Allocator) ?freetype.Face {
+    const index = findOrLoadFallback(codepoint, alloc) orelse return null;
+    return g_fallback_fonts.at(index).font.face;
+}
+
+/// HarfBuzz font for a fallback font, created on first use and kept with it.
+fn fallbackHbFont(index: fallback_cache.Index) ?harfbuzz.Font {
+    const loaded = &g_fallback_fonts.at(index).font;
+    if (loaded.hb_font == null) {
+        loaded.hb_font = harfbuzz.freetype.createFont(loaded.face.handle) catch null;
+    }
+    return loaded.hb_font;
+}
+
+fn hbFallbackFontCount() usize {
+    var count: usize = 0;
+    for (g_fallback_fonts.entries.items) |entry| {
+        if (entry.font.hb_font != null) count += 1;
+    }
+    return count;
 }
 
 // ============================================================================
@@ -1603,6 +1682,7 @@ pub const MemoryStats = struct {
     icons: usize = 0,
     titlebar_glyphs: usize = 0,
     fallback_faces: usize = 0,
+    fallback_codepoints: usize = 0,
     no_fallback_entries: usize = 0,
     hb_fallback_fonts: usize = 0,
     atlas_cpu_bytes: usize = 0,
@@ -1638,9 +1718,10 @@ pub fn memoryStats() MemoryStats {
         .graphemes = grapheme_cache.count(),
         .icons = icon_cache.count(),
         .titlebar_glyphs = g_titlebar_cache.count(),
-        .fallback_faces = g_fallback_faces.count(),
-        .no_fallback_entries = g_no_fallback.count(),
-        .hb_fallback_fonts = g_hb_fallback_fonts.count(),
+        .fallback_faces = g_fallback_fonts.fontCount(),
+        .fallback_codepoints = g_fallback_fonts.codepointCount(),
+        .no_fallback_entries = g_fallback_fonts.missingCount(),
+        .hb_fallback_fonts = hbFallbackFontCount(),
         .atlas_cpu_bytes = atlasCpuBytes(g_atlas),
         .atlas_gpu_bytes = atlasGpuBytes(g_atlas, g_atlas_texture),
         .atlas_size = atlasSize(g_atlas),
@@ -1721,32 +1802,9 @@ pub fn releaseAtlasGpuTexturesForDeviceRecreate() AtlasGpuTextureRelease {
 
 /// Clear fallback font faces.
 pub fn clearFallbackFaces(allocator: std.mem.Allocator) void {
-    var it = g_fallback_faces.iterator();
-    while (it.next()) |entry| {
-        entry.value_ptr.deinit();
-    }
-    g_fallback_faces.deinit(allocator);
-    g_fallback_faces = .empty;
-
-    // Free sfnt buffers backing memory-loaded fallback faces. Must happen after
-    // the faces above are deinited, since FreeType borrows these buffers.
-    for (g_fallback_font_data.items) |data| {
-        allocator.free(data);
-    }
-    g_fallback_font_data.deinit(allocator);
-    g_fallback_font_data = .empty;
-
-    // Also clear negative cache
-    g_no_fallback.deinit(allocator);
-    g_no_fallback = .empty;
-
-    // Clean up HarfBuzz fallback fonts
-    var hb_it = g_hb_fallback_fonts.iterator();
-    while (hb_it.next()) |entry| {
-        entry.value_ptr.destroy();
-    }
-    g_hb_fallback_fonts.deinit(allocator);
-    g_hb_fallback_fonts = .empty;
+    // Releases each fallback font's HarfBuzz font, FreeType face and backing
+    // sfnt buffer (in that order), the codepoint map and the negative cache.
+    g_fallback_fonts.deinit(allocator);
 
     if (g_hb_font) |*hf| {
         hf.destroy();
