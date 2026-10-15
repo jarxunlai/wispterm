@@ -58,6 +58,21 @@ tested passes.
 
 ## macOS
 
+- **1.40.5 and earlier leak memory on macOS (fixed after 1.40.5).** WispTerm
+  does not start through `NSApplicationMain`, so no thread had an outer
+  autorelease pool, and AppKit objects autoreleased outside an explicit
+  `@autoreleasepool` were never freed. The largest source was
+  `-[NSWindow isZoomed]`, polled every frame: about 4 empty `NSMutableArray`s
+  per call. One report reached a 4.7 GB footprint after 1.5 days. In an A/B run
+  of the same Debug build with continuous terminal output, the arrays grew by
+  about 290 per second before the fix and stayed flat after it. The fix has
+  three parts. The window loop now opens an autorelease pool per iteration
+  (`window_backend.beginLoopIteration`, the same pattern as Ghostty's Metal
+  renderer). `isZoomed` is now cached from window-delegate callbacks. Every
+  exported `.m` bridge function opens its own pool, and
+  `src/source_guards/objc_autorelease_guard.zig` enforces this. Remaining gaps:
+  the guard is lexical, so property dot-syntax sends (`obj.prop`) are not
+  checked, and no multi-day soak run has been done yet.
 - Event buffers in `window_macos_bridge.m` cross the AppKit main thread and the
   render/input worker thread. They are now serialized with `os_unfair_lock`
   (`input_lock`/`message_lock`); the remaining gap is heavy-input stress testing

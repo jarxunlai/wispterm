@@ -118,7 +118,9 @@ void wispterm_metal_arm_capture(void) {
 
 const unsigned char *wispterm_metal_capture_pixels(void) {
     if (wispterm_metal_capture_buffer == nil) return NULL;
-    return (const unsigned char *)[wispterm_metal_capture_buffer contents];
+    @autoreleasepool {
+        return (const unsigned char *)[wispterm_metal_capture_buffer contents];
+    }
 }
 
 int wispterm_metal_capture_width(void) { return wispterm_metal_capture_w; }
@@ -515,7 +517,9 @@ size_t wispterm_metal_buffer_length(unsigned int handle) {
     if (!wispterm_metal_buffer_valid(handle)) return 0;
     id<MTLBuffer> buffer = wispterm_metal_buffers[handle].buffer;
     if (buffer == nil) return 0;
-    return [buffer length];
+    @autoreleasepool {
+        return [buffer length];
+    }
 }
 
 void wispterm_metal_buffer_destroy(unsigned int handle) {

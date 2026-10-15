@@ -8329,6 +8329,11 @@ fn runMainLoop(self: *AppWindow) !void {
     // Main loop — shared logic with backend-specific window management
     var running = true;
     while (running) {
+        // macOS: one autorelease pool per iteration (popped on every
+        // continue/break/error) — without it AppKit's autoreleased objects
+        // pile up forever, since nothing here runs under NSApplicationMain.
+        const loop_scope = window_backend.beginLoopIteration();
+        defer window_backend.endLoopIteration(loop_scope);
         g_loop_iter +%= 1; // tag each iteration so the latency probe can tell same-iteration paints from stalls
         // Check for config file changes
         if (config_watcher) |*w| checkConfigReload(allocator, w);
@@ -8339,25 +8344,16 @@ fn runMainLoop(self: *AppWindow) !void {
         overlays.tickQuickAiVerify();
         if (file_explorer.tickAsync()) applyUiEffect(.repaint);
         syncTransferToastFromFileExplorer();
-        if (tickAllPreviewPanes()) {
-            g_force_rebuild = true;
-            g_cells_valid = false;
-        }
+        if (tickAllPreviewPanes()) applyUiEffect(.repaint);
         if (weixin_qr_panel.visible()) {
             const qr_allocator = g_allocator orelse allocator;
-            if (weixin_qr_panel.refresh(qr_allocator)) {
-                g_force_rebuild = true;
-                g_cells_valid = false;
-            }
+            if (weixin_qr_panel.refresh(qr_allocator)) applyUiEffect(.repaint);
         }
         maybePrintMemoryDebug(std.time.milliTimestamp());
         flushAgentHistoryStoreIfDirty(false);
         pollUpdateCheck(self.app);
         if (activeSkillCenter()) |sc_session| pollSkillCenterOp(sc_session);
-        if (self.app.port_forward_manager.tick() and activePortForwarding() != null) {
-            g_force_rebuild = true;
-            g_cells_valid = false;
-        }
+        if (self.app.port_forward_manager.tick() and activePortForwarding() != null) applyUiEffect(.repaint);
 
         // Process pending resize (coalesced, like Ghostty)
         // We wait for RESIZE_COALESCE_MS after last resize event before applying.

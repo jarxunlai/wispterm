@@ -141,6 +141,7 @@ extern fn wispterm_macos_window_test_push_mouse_move(handle: NativeHandle, x: i3
 extern fn wispterm_macos_window_test_push_mouse_wheel(handle: NativeHandle, delta: i16, xpos: i32, ypos: i32, ctrl: bool, shift: bool, alt: bool) void;
 extern fn wispterm_macos_window_test_set_ime_preedit(handle: NativeHandle, text: [*:0]const u8) void;
 extern fn wispterm_macos_window_test_push_file_drop(handle: NativeHandle, path: [*:0]const u8, x: i32, y: i32) void;
+extern fn wispterm_macos_test_autorelease_into_caller_pool(deallocated: *bool) void;
 
 var global_window: ?*Window = null;
 var test_message_seen: bool = false;
@@ -842,4 +843,28 @@ test "macOS pumpAppEvents on a worker thread wakes when input is pushed" {
     const elapsed = probe.elapsed_ms.load(.acquire);
     try std.testing.expect(elapsed >= 0);
     try std.testing.expect(elapsed < 3000);
+}
+
+test "macOS loop-iteration scope drains objects autoreleased during the iteration" {
+    // Regression for the 1.40.5 footprint leak: with no NSApplicationMain there
+    // is no outer pool, so objects AppKit autoreleased in the render loop were
+    // never freed. endLoopIteration must actually release them.
+    var deallocated = false;
+    const scope = platform_window.beginLoopIteration();
+    wispterm_macos_test_autorelease_into_caller_pool(&deallocated);
+    try std.testing.expect(!deallocated);
+    platform_window.endLoopIteration(scope);
+    try std.testing.expect(deallocated);
+}
+
+test "macOS isMaximized follows zoom/unzoom through the cached zoom state" {
+    const title = std.unicode.utf8ToUtf16LeStringLiteral("WispTerm Zoom Cache");
+    var window = try Window.init(320, 180, title, null, null, false);
+    defer window.deinit();
+
+    try std.testing.expect(!platform_window.isMaximized(window.hwnd));
+    _ = platform_window.showMaximized(window.hwnd);
+    try std.testing.expect(platform_window.isMaximized(window.hwnd));
+    _ = platform_window.showRestored(window.hwnd);
+    try std.testing.expect(!platform_window.isMaximized(window.hwnd));
 }

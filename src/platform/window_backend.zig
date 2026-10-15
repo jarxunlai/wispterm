@@ -295,6 +295,27 @@ pub fn postWakeup() void {
     platform_window.postWakeup();
 }
 
+/// Platform scope around one window main-loop iteration; pass it back to
+/// `endLoopIteration` on the same thread.
+pub const LoopIteration = struct {
+    token: ?*anyopaque,
+};
+
+/// Open the per-iteration platform scope. On macOS this pushes an Objective-C
+/// autorelease pool so objects AppKit autoreleases during the iteration (e.g.
+/// from -[NSWindow occlusionState] or event dispatch) are freed every pass —
+/// WispTerm does not run under NSApplicationMain, so nothing else drains them.
+/// Mirrors Ghostty's Metal renderer, which wraps each drawFrame in an
+/// AutoreleasePool. No-op on Windows/Linux.
+pub fn beginLoopIteration() LoopIteration {
+    return .{ .token = platform_window.beginLoopIteration() };
+}
+
+/// Close the scope `beginLoopIteration` opened. Scopes nest LIFO per thread.
+pub fn endLoopIteration(iteration: LoopIteration) void {
+    platform_window.endLoopIteration(iteration.token);
+}
+
 pub fn refreshClientSizeFromNative(window: *Window) bool {
     const rect = clientRect(window) orelse return false;
     setClientSize(window, rect.right - rect.left, rect.bottom - rect.top);

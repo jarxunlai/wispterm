@@ -90,6 +90,11 @@ struct WispTermMacWindowState {
     CAMetalLayer *layer;
     WispTermMacWindowDelegate *delegate;
     bool close_requested;
+    // Cached -[NSWindow isZoomed]. Written on the main thread by the delegate
+    // callbacks (and after create/show/zoom/set_frame); read by every window
+    // loop — including worker-thread windows — through
+    // wispterm_macos_window_is_zoomed. See wispterm_macos_refresh_zoomed.
+    atomic_bool is_zoomed;
     int32_t ime_caret_x;
     int32_t ime_caret_y;
     int32_t ime_caret_height;
@@ -139,6 +144,21 @@ struct WispTermMacWindowState {
 // close_requested promptly instead of sleeping out its full timeout.
 static void wispterm_macos_worker_wakeup_signal(void);
 
+// -[NSWindow isZoomed] is not a cheap getter: AppKit recomputes the window's
+// standard frame on every call (-_standardFrameForScreen: walks the drawers
+// into fresh autoreleased NSArrays). The render loop and titlebar used to ask
+// for it every frame, and with no drained autorelease pool on the main thread
+// that leaked tens of millions of empty arrays over a day. Recompute it only
+// where the answer can change — frame, screen, or full-screen transitions —
+// and let the hot path read the cached flag. Main thread only (AppKit).
+static void wispterm_macos_refresh_zoomed(WispTermMacWindowState *state) {
+    if (state == NULL || state->window == nil) return;
+    @autoreleasepool {
+        const bool zoomed = [state->window isZoomed] ? true : false;
+        atomic_store_explicit(&state->is_zoomed, zoomed, memory_order_relaxed);
+    }
+}
+
 @implementation WispTermMacWindowDelegate
 - (BOOL)windowShouldClose:(id)sender {
     (void)sender;
@@ -151,6 +171,49 @@ static void wispterm_macos_worker_wakeup_signal(void);
     (void)notification;
     if (self.state != NULL) self.state->close_requested = true;
     wispterm_macos_worker_wakeup_signal();
+}
+
+- (void)windowDidResize:(NSNotification *)notification {
+    (void)notification;
+    wispterm_macos_refresh_zoomed(self.state);
+}
+
+- (void)windowDidMove:(NSNotification *)notification {
+    (void)notification;
+    wispterm_macos_refresh_zoomed(self.state);
+}
+
+- (void)windowDidEndLiveResize:(NSNotification *)notification {
+    (void)notification;
+    wispterm_macos_refresh_zoomed(self.state);
+}
+
+- (void)windowDidEnterFullScreen:(NSNotification *)notification {
+    (void)notification;
+    wispterm_macos_refresh_zoomed(self.state);
+}
+
+- (void)windowDidExitFullScreen:(NSNotification *)notification {
+    (void)notification;
+    wispterm_macos_refresh_zoomed(self.state);
+}
+
+- (void)windowDidChangeScreen:(NSNotification *)notification {
+    (void)notification;
+    wispterm_macos_refresh_zoomed(self.state);
+}
+
+- (void)windowDidDeminiaturize:(NSNotification *)notification {
+    (void)notification;
+    wispterm_macos_refresh_zoomed(self.state);
+}
+
+// NSApplicationDidChangeScreenParametersNotification (registered in
+// wispterm_macos_window_create): a Dock/menu-bar or resolution change moves
+// the screen's visible frame, which can flip isZoomed without a frame change.
+- (void)screenParametersDidChange:(NSNotification *)notification {
+    (void)notification;
+    wispterm_macos_refresh_zoomed(self.state);
 }
 @end
 
@@ -1097,6 +1160,11 @@ void *wispterm_macos_window_create(
             WispTermMacWindowDelegate *delegate = [[WispTermMacWindowDelegate alloc] init];
             delegate.state = state;
             [window setDelegate:delegate];
+            [[NSNotificationCenter defaultCenter]
+                addObserver:delegate
+                   selector:@selector(screenParametersDidChange:)
+                       name:NSApplicationDidChangeScreenParametersNotification
+                     object:nil];
 
             state->window = window;
             state->view = view;
@@ -1118,6 +1186,7 @@ void *wispterm_macos_window_create(
             [window makeFirstResponder:view];
             [NSApp activateIgnoringOtherApps:NO];
             if (maximize) [window zoom:nil];
+            wispterm_macos_refresh_zoomed(state);
             result = state;
         }
     };
@@ -1143,6 +1212,8 @@ void wispterm_macos_window_destroy(void *handle) {
     if (state == NULL) return;
     wispterm_macos_run_on_main(^{
         @autoreleasepool {
+            [[NSNotificationCenter defaultCenter] removeObserver:state->delegate];
+            state->delegate.state = NULL;
             [state->window setDelegate:nil];
             [state->window orderOut:nil];
             [state->layer release];
@@ -1165,17 +1236,21 @@ void *wispterm_macos_window_ns_window(void *handle) {
 bool wispterm_macos_window_visible(void *handle) {
     WispTermMacWindowState *state = wispterm_macos_state(handle);
     if (state == NULL || state->window == NULL) return true;
-    NSWindowOcclusionState occ = [state->window occlusionState];
-    bool visible = (occ & NSWindowOcclusionStateVisible) != 0;
-    bool miniaturized = [state->window isMiniaturized];
-    return visible && !miniaturized;
+    @autoreleasepool {
+        NSWindowOcclusionState occ = [state->window occlusionState];
+        bool visible = (occ & NSWindowOcclusionStateVisible) != 0;
+        bool miniaturized = [state->window isMiniaturized];
+        return visible && !miniaturized;
+    }
 }
 
 // True iff the window is the key window (has keyboard focus).
 bool wispterm_macos_window_is_key(void *handle) {
     WispTermMacWindowState *state = wispterm_macos_state(handle);
     if (state == NULL || state->window == NULL) return true;
-    return [state->window isKeyWindow] ? true : false;
+    @autoreleasepool {
+        return [state->window isKeyWindow] ? true : false;
+    }
 }
 
 void wispterm_macos_window_poll(void *handle) {
@@ -1244,6 +1319,28 @@ void wispterm_macos_app_pump_events(double timeout_seconds) {
         }
         [NSApp updateWindows];
     }
+}
+
+// libobjc's autorelease-pool entry points — what clang lowers @autoreleasepool
+// {} to. objc/objc-internal.h is not in the public SDK, so declare them here
+// (zig-objc, which Ghostty uses for the same job, binds the same symbols).
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *context);
+
+// Per-main-loop-iteration autorelease pool (window_backend.beginLoopIteration /
+// endLoopIteration). WispTerm does not start through NSApplicationMain, so
+// neither the main thread nor the per-window worker threads have an outer pool
+// that AppKit drains each event-loop pass: anything autoreleased outside an
+// explicit @autoreleasepool lands in a pool page that is never popped. Zig
+// brackets every loop iteration with these, mirroring Ghostty's renderer,
+// which wraps each drawFrame in an objc.AutoreleasePool. Push/pop are LIFO
+// per thread; the token is only meaningful on the thread that pushed it.
+void *wispterm_macos_autorelease_pool_push(void) {
+    return objc_autoreleasePoolPush();
+}
+
+void wispterm_macos_autorelease_pool_pop(void *token) {
+    if (token != NULL) objc_autoreleasePoolPop(token);
 }
 
 // Wake any blocked idle pump from any thread: posts an application-defined
@@ -1395,11 +1492,34 @@ void wispterm_macos_window_test_push_mouse_wheel(
 void wispterm_macos_window_test_set_ime_preedit(void *handle, const char *text) {
     WispTermMacWindowState *state = wispterm_macos_state(handle);
     if (state == NULL || text == NULL) return;
-    wispterm_macos_set_preedit(state, [NSString stringWithUTF8String:text]);
+    @autoreleasepool {
+        wispterm_macos_set_preedit(state, [NSString stringWithUTF8String:text]);
+    }
 }
 
 void wispterm_macos_window_test_push_file_drop(void *handle, const char *path, int32_t x, int32_t y) {
     wispterm_macos_push_file_drop_event(wispterm_macos_state(handle), path, x, y);
+}
+
+// Test-only: an object whose -dealloc flips a caller-owned flag, so a test can
+// observe exactly when the enclosing autorelease pool drains.
+@interface WispTermAutoreleaseProbe : NSObject
+@property(nonatomic, assign) bool *deallocated;
+@end
+
+@implementation WispTermAutoreleaseProbe
+- (void)dealloc {
+    if (self.deallocated != NULL) *self.deallocated = true;
+    [super dealloc];
+}
+@end
+
+// Deliberately autoreleases into the CALLER's pool (no @autoreleasepool here —
+// allowlisted in src/source_guards/objc_autorelease_guard.zig) so the
+// loop-iteration scope test can prove endLoopIteration frees it.
+void wispterm_macos_test_autorelease_into_caller_pool(bool *deallocated) {
+    WispTermAutoreleaseProbe *probe = [[[WispTermAutoreleaseProbe alloc] init] autorelease];
+    probe.deallocated = deallocated;
 }
 
 void wispterm_macos_window_request_close(void *handle) {
@@ -1482,8 +1602,10 @@ bool wispterm_macos_window_get_content_frame(void *handle, WispTermMacRect *out)
 }
 
 uint32_t wispterm_macos_window_dpi(void *handle) {
-    const double scale = wispterm_macos_scale(wispterm_macos_state(handle));
-    return (uint32_t)wispterm_macos_round_double(96.0 * scale);
+    @autoreleasepool {
+        const double scale = wispterm_macos_scale(wispterm_macos_state(handle));
+        return (uint32_t)wispterm_macos_round_double(96.0 * scale);
+    }
 }
 
 void wispterm_macos_window_show(void *handle) {
@@ -1492,6 +1614,7 @@ void wispterm_macos_window_show(void *handle) {
     wispterm_macos_run_on_main(^{
         @autoreleasepool {
             [state->window makeKeyAndOrderFront:nil];
+            wispterm_macos_refresh_zoomed(state);
         }
     });
 }
@@ -1517,9 +1640,13 @@ void wispterm_macos_window_make_key(void *handle) {
     });
 }
 
+// Reads the flag wispterm_macos_refresh_zoomed maintains instead of asking
+// AppKit: this is polled every frame (titlebar, windowed-position tracking),
+// sometimes from worker-thread windows where -isZoomed is not even safe.
 bool wispterm_macos_window_is_zoomed(void *handle) {
     WispTermMacWindowState *state = wispterm_macos_state(handle);
-    return state != NULL && state->window != nil && [state->window isZoomed];
+    if (state == NULL || state->window == nil) return false;
+    return atomic_load_explicit(&state->is_zoomed, memory_order_relaxed);
 }
 
 void wispterm_macos_window_zoom(void *handle) {
@@ -1528,6 +1655,7 @@ void wispterm_macos_window_zoom(void *handle) {
     wispterm_macos_run_on_main(^{
         @autoreleasepool {
             [state->window zoom:nil];
+            wispterm_macos_refresh_zoomed(state);
         }
     });
 }
@@ -1540,6 +1668,7 @@ bool wispterm_macos_window_set_frame(void *handle, int32_t x, int32_t y, int32_t
             NSRect frame = NSMakeRect(x, y, width > 0 ? width : 1, height > 0 ? height : 1);
             [state->window setFrame:frame display:YES];
             wispterm_macos_sync_layer(state);
+            wispterm_macos_refresh_zoomed(state);
         }
     });
     return true;
