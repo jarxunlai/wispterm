@@ -224,6 +224,25 @@ WispTerm 的渲染主循环也跑在 main thread (`first_window.run()` per App.z
 所以 menu callback 和渲染读写同一份 threadlocal storage。
 **前提是新窗口创建时不要把 menu 安装挪到 spawned thread**。
 
+### 7. 没有 `NSApplicationMain` 就没有外层 autorelease pool
+
+WispTerm 自己驱动事件循环（`AppWindow.runMainLoop` + `wispterm_macos_app_pump_events`），
+不走 `NSApplicationMain`，所以主线程和每个窗口 worker 线程都**没有**每轮自动 drain 的
+外层 pool。在显式 `@autoreleasepool` 之外被 autorelease 的对象会落进运行时隐式创建、
+永不 pop 的 pool 页，一直留在内存里。1.40.5 每帧调用 `-[NSWindow isZoomed]`
+（内部 `_standardFrameForScreen` → `+[NSArray array]`），1.5 天涨到 4.7 GB footprint。
+
+规则：
+- 主循环每轮都有一个 pool：`window_backend.beginLoopIteration()` / `endLoopIteration()`
+  （对应 Ghostty `renderer/Metal.zig` 在 `drawFrame` 前后 init/deinit `objc.AutoreleasePool`）。
+- 每个非 static 的 `.m` 导出函数，只要发 ObjC 消息，就自己包 `@autoreleasepool`：
+  它们也会从 worker 线程、初始化路径和测试里被调用，这些地方不在主循环 pool 里。
+  `src/source_guards/objc_autorelease_guard.zig` 会扫描所有 `.m` 文件强制检查。
+- 不要每帧调用看起来像 getter 的 AppKit API（`isZoomed`、`standardFrame` 等），
+  它们可能临时分配对象。改为在 delegate 回调里缓存（参考 `state->is_zoomed`）。
+- 验证：`heap <pid> | grep -E "NSMutableArray|autoreleasepool content"`，
+  在空闲和持续输出两种状态下分别采样，计数应保持不变。
+
 ---
 
 ## Zig 0.15.x 的小陷阱
