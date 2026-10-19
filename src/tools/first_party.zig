@@ -59,6 +59,7 @@ const static_definitions = [_]Definition{
     .{ .name = "subagent", .label = "subagent", .description = "Delegate a self-contained research task to a background subagent.", .category = .agent },
     .{ .name = "send_attachment", .label = "send_attachment", .description = "Send a local file back to the active chat conversation (WeChat or Feishu).", .category = .integration },
     .{ .name = "get_system_time", .label = "get_system_time", .description = "Read the current local system time on demand.", .category = .agent },
+    .{ .name = "password_get", .label = "password_get", .description = "Read a secret from the password store after user approval.", .category = .agent },
     .{ .name = "memory_save", .label = "memory_save", .description = "Save a durable long-term memory.", .category = .memory },
     .{ .name = "memory_recall", .label = "memory_recall", .description = "Read a durable long-term memory.", .category = .memory },
     .{ .name = "memory_delete", .label = "memory_delete", .description = "Delete a durable long-term memory.", .category = .memory },

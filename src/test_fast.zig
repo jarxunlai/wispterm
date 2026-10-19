@@ -407,6 +407,8 @@ test {
     _ = @import("agent_tools/research.zig");
     _ = @import("agent_tools/knowledge.zig");
     _ = @import("agent_tools/memory.zig");
+    _ = @import("agent_tools/credential.zig");
+    _ = @import("credential/store.zig");
     _ = @import("agent_tools/memory_search.zig");
     _ = @import("agent_tools/output.zig");
     _ = @import("agent_tools/schedule.zig");

@@ -218,6 +218,23 @@ demand.
 - `/forget <name>` deletes a memory by its name.
 - Set `ai-memory-enabled = false` in the config to turn the system off.
 
+## Password Store
+
+A small plain-text store for the passwords you type most (root, mysql, a
+jump host, ...), shared by you and the agent. The file is `passwords` in the
+config directory (next to `ssh_hosts`), one `name = secret` per line, `#`
+comments allowed; it is created owner-only (0600) on macOS/Linux.
+
+- **You**: Command Center (`Ctrl+Shift+P`, `Cmd+Shift+P` on macOS) → **Password Store** opens the
+  file in your editor. Afterwards, type an entry name (or `pass`) in the
+  Command Center and press Enter on the `Password: <name>` row to copy the
+  secret to the clipboard, then paste it into the terminal.
+- **The agent**: the `password_get` tool reads one entry by name for
+  privileged work (sudo, a DB login, an SSH password). Every reveal shows an
+  approval prompt naming the entry, at every permission level including
+  `full`; an unknown name returns only the list of available names. Disable
+  the tool in Skill Center if the agent should never see secrets.
+
 ## Markdown in replies
 
 AI Chat tabs and the Copilot sidebar share the native Markdown renderer. Tables

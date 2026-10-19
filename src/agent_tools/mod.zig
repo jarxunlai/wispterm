@@ -23,6 +23,7 @@ const knowledge = @import("knowledge.zig");
 const agent_memory_tool = @import("memory.zig");
 const agent_memory_search = @import("memory_search.zig");
 const agent_system_time = @import("system_time.zig");
+const agent_credential = @import("credential.zig");
 const agent_wispterm_config = @import("wispterm_config.zig");
 const terminal_tools = @import("terminal.zig");
 const agent_sessions = @import("sessions.zig");
@@ -307,6 +308,11 @@ pub fn executeToolCall(ctx: *ToolContext, call: ToolCall) ![]u8 {
     }
     if (std.mem.eql(u8, call.name, "get_system_time")) {
         return agent_system_time.now(ctx.allocator);
+    }
+    if (std.mem.eql(u8, call.name, agent_credential.TOOL_NAME)) {
+        const args = tool_args.parse(ctx.allocator, call.arguments) orelse return ctx.allocator.dupe(u8, "Invalid tool arguments");
+        defer args.deinit();
+        return agent_credential.get(ctx, args.value);
     }
     if (std.mem.startsWith(u8, call.name, "memory_") and !ctx.settings.memory_enabled) {
         return ctx.allocator.dupe(u8, "Memory is disabled (ai-memory-enabled = false).");

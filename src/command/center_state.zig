@@ -64,6 +64,7 @@ pub const CommandAction = enum {
     open_recipe,
     import_recipe,
     export_recipe,
+    open_password_store,
 };
 
 pub const CommandEntry = struct {
@@ -134,6 +135,7 @@ pub const command_entries = [_]CommandEntry{
     .{ .title = "Open Recipe", .detail = "Restore a saved recipe into a new window (search its name here)", .shortcut = "", .action = .open_recipe },
     .{ .title = "Import Recipe", .detail = "Import a shared recipe JSON file into your recipes", .shortcut = "", .action = .import_recipe },
     .{ .title = "Export Recipe", .detail = "Save this window's layout as a shareable recipe JSON file", .shortcut = "", .action = .export_recipe },
+    .{ .title = "Password Store", .detail = "Edit stored passwords; type a name here and press Enter to copy it", .shortcut = "", .action = .open_password_store },
 };
 
 test "command center exposes generic integration prompt action only" {
@@ -470,6 +472,10 @@ test "command center includes Feishu direct actions" {
 
 test "command center includes quick configure AI" {
     try expectCommandEntry("Settings: Quick Configure AI", .quick_configure_ai);
+}
+
+test "command center includes Password Store action" {
+    try expectCommandEntry("Password Store", .open_password_store);
 }
 
 test "command center includes prompt queue actions" {
