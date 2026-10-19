@@ -336,6 +336,7 @@ pub const Strings = struct {
     toast_recipe_restore_failed: []const u8,
     toast_recipe_ai_failed: []const u8,
     toast_recipe_open_hint: []const u8,
+    toast_password_copied: []const u8,
     toast_ssh_latency_requires_ssh: []const u8,
     toast_ssh_latency_jump_unsupported: []const u8,
     ssh_latency_on: []const u8,
@@ -653,6 +654,7 @@ const en = Strings{
     .toast_recipe_restore_failed = "Recipe could not be restored",
     .toast_recipe_ai_failed = "Some AI tabs could not be restored",
     .toast_recipe_open_hint = "Type a recipe name in the Command Palette and press Enter",
+    .toast_password_copied = "Password copied: ",
     .toast_ssh_latency_requires_ssh = "Open a WispTerm SSH session first",
     .toast_ssh_latency_jump_unsupported = "Ping cannot measure an SSH route through a jump host",
     .ssh_latency_on = "On",
@@ -970,6 +972,7 @@ const zh_CN = Strings{
     .toast_recipe_restore_failed = "Recipe 恢复失败",
     .toast_recipe_ai_failed = "部分 AI 标签页无法恢复",
     .toast_recipe_open_hint = "在命令面板输入 Recipe 名称并回车即可打开",
+    .toast_password_copied = "已复制密码：",
     .toast_ssh_latency_requires_ssh = "请先打开一个 WispTerm SSH 会话",
     .toast_ssh_latency_jump_unsupported = "Ping 暂不支持测量经过跳板机的 SSH 路径",
     .ssh_latency_on = "已开启",
@@ -1142,6 +1145,7 @@ pub fn commandTitle(action: CommandAction) ?[]const u8 {
         .open_recipe => "打开 Recipe",
         .import_recipe => "导入 Recipe",
         .export_recipe => "导出 Recipe",
+        .open_password_store => "密码库",
     };
 }
 
@@ -1211,6 +1215,7 @@ pub fn commandDetail(action: CommandAction) ?[]const u8 {
         .open_recipe => "把已保存的 Recipe 恢复到新窗口（在这里搜索名称）",
         .import_recipe => "把分享来的 Recipe JSON 文件导入到你的 Recipe 列表",
         .export_recipe => "把当前窗口的布局导出成可分享的 Recipe JSON 文件",
+        .open_password_store => "编辑已保存的密码；在这里输入名称并回车即可复制",
     };
 }
 

@@ -57,6 +57,7 @@ const quick_ai_config = @import("overlays/quick_ai_config.zig");
 const recipe_form_state = @import("../recipe/form_state.zig");
 const recipe_store = @import("../recipe/store.zig");
 const recipe_ui = @import("../recipe/ui_state.zig");
+const credential_store = @import("../credential/store.zig");
 const quick_verify = @import("../assistant/quick_verify.zig");
 const oauth_codec = @import("../assistant/oauth/codec.zig");
 const oauth_login = @import("../assistant/oauth/login.zig");
@@ -305,6 +306,7 @@ const PaletteItem = union(enum) {
     snippet: usize,
     ssh_profile: usize,
     recipe: usize,
+    password: usize,
     tmux_profile: usize,
     ai_profile: usize,
     theme: usize,
@@ -525,6 +527,7 @@ fn commandPaletteOpenWithMode(mode: CommandPaletteMode) void {
     snippetsState().loaded = false;
     // Same for recipes: re-scan <config-dir>/recipes on each palette open.
     if (AppWindow.g_allocator) |alloc| recipe_ui.invalidateRecipeList(alloc);
+    if (AppWindow.g_allocator) |alloc| credential_store.invalidatePaletteList(alloc);
     if (!commandPaletteState().visible) {
         g_overlay_anim.palette_opened_at_ms = std.time.milliTimestamp();
         g_overlay_anim.palette_closing_at_ms = 0;
@@ -993,6 +996,7 @@ fn executeCommand(action: CommandAction) void {
         .star_repo => openRepoStar(),
         .save_workspace_recipe => openRecipeForm(),
         .open_recipe => showStatusToast(i18n.s().toast_recipe_open_hint),
+        .open_password_store => openPasswordStore(),
         .import_recipe => {
             if (AppWindow.g_allocator) |alloc| AppWindow.importWorkspaceRecipeFromFile(alloc);
         },
@@ -1492,6 +1496,14 @@ fn rebuildPaletteScratch() void {
         g_palette_scratch[g_palette_scratch_len] = .{ .recipe = recipe_idx };
         g_palette_scratch_len += 1;
     }
+    // Passwords: search-only rows; Enter copies the secret to the clipboard.
+    if (AppWindow.g_allocator) |alloc| credential_store.ensurePaletteList(alloc);
+    for (credential_store.paletteItems(), 0..) |entry, pw_idx| {
+        if (g_palette_scratch_len >= PALETTE_SCRATCH_CAP) break;
+        if (!command_palette_model.passwordNameMatchesFilter(entry.name, filter)) continue;
+        g_palette_scratch[g_palette_scratch_len] = .{ .password = pw_idx };
+        g_palette_scratch_len += 1;
+    }
     loadAiProfiles();
     for (0..assistantProfiles().profile_count) |ai_idx| {
         if (g_palette_scratch_len >= PALETTE_SCRATCH_CAP) break;
@@ -1514,10 +1526,25 @@ fn executePaletteItem(item: PaletteItem) void {
         .snippet => |snippet_idx| sendSnippet(snippet_idx),
         .ssh_profile => |profile_idx| connectSshProfile(profile_idx),
         .recipe => |recipe_idx| openRecipeFromPalette(recipe_idx),
+        .password => |pw_idx| copyPasswordFromPalette(pw_idx),
         .tmux_profile => |profile_idx| connectSshProfileTmux(profile_idx),
         .ai_profile => |profile_idx| _ = spawnAiProfileWithAgentOverride(profile_idx, null),
         .theme => |ti| applyEmbeddedThemeFromPalette(ti),
     }
+}
+
+fn openPasswordStore() void {
+    const alloc = AppWindow.g_allocator orelse return;
+    if (!credential_store.openInEditor(alloc)) std.debug.print("[password-store] failed to open editor\n", .{});
+}
+
+fn copyPasswordFromPalette(pw_idx: usize) void {
+    const items = credential_store.paletteItems();
+    if (pw_idx >= items.len) return;
+    if (!AppWindow.input.copyTextToClipboard(items[pw_idx].secret)) return;
+    var msg_buf: [160]u8 = undefined;
+    const msg = std.fmt.bufPrint(&msg_buf, "{s}{s}", .{ i18n.s().toast_password_copied, items[pw_idx].name }) catch i18n.s().toast_password_copied;
+    showStatusToast(msg);
 }
 
 fn openRecipeFromPalette(recipe_idx: usize) void {
@@ -2585,6 +2612,17 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
                         const suffix_right = layout.box_x + layout.box_w - pad_x;
                         renderTitlebarText(suffix, suffix_right - suffix_w, text_y, shortcut_color);
                         renderTitlebarTextLimited(recipe_title, title_x, text_y, row_title_color, (suffix_right - suffix_w) - title_x - 18);
+                    },
+                    .password => |pw_idx| {
+                        const pw_items = credential_store.paletteItems();
+                        if (pw_idx >= pw_items.len) continue;
+                        var title_buf: [160]u8 = undefined;
+                        const pw_title = std.fmt.bufPrint(title_buf[0..], "Password: {s}", .{pw_items[pw_idx].name}) catch "Password";
+                        const suffix = "  copy";
+                        const suffix_w = measureTitlebarText(suffix);
+                        const suffix_right = layout.box_x + layout.box_w - pad_x;
+                        renderTitlebarText(suffix, suffix_right - suffix_w, text_y, shortcut_color);
+                        renderTitlebarTextLimited(pw_title, title_x, text_y, row_title_color, (suffix_right - suffix_w) - title_x - 18);
                     },
                     .ssh_profile => |profile_idx| {
                         if (profile_idx >= sshState().profile_count) continue;
