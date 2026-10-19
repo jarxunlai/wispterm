@@ -16,6 +16,7 @@ const builtin = @import("builtin");
 const c = std.c;
 const pty_command = @import("pty_command.zig");
 const login_shell = @import("login_shell.zig");
+const shell_env = @import("shell_env.zig");
 
 const fd_t = c.fd_t;
 
@@ -424,6 +425,10 @@ fn childExec(
     // back to the system database.
     _ = unsetenv("TERMINFO");
 
+    // User `env = KEY=VALUE` config last, so it overrides the values above
+    // (Ghostty applies `config.env` the same way in termio/Exec.zig).
+    for (shell_env.entries()) |entry| _ = setenv(entry.key.ptr, entry.value.ptr, 1);
+
     // Parse command line into argv (split on ASCII whitespace).
     var arg_storage: [ARG_BUF]u8 = undefined;
     var argv: [MAX_ARGV + 1]?[*:0]const u8 = undefined;
@@ -620,6 +625,42 @@ test "spawn child writes output that readOutput receives" {
         }
     }
 
+    try std.testing.expect(saw_marker);
+}
+
+test "spawn child inherits the env config entries" {
+    var map: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
+    defer map.deinit(std.testing.allocator);
+    try map.put(std.testing.allocator, "WISPTERM_ENV_TEST", "msys2-marker");
+    try shell_env.set(std.testing.allocator, &map);
+    defer shell_env.clear();
+
+    var pty = try Pty.open(.{ .ws_col = 80, .ws_row = 24 });
+    defer pty.deinit();
+
+    var command: pty_command.Command = .{};
+    defer command.deinit();
+
+    try pty.startCommand(&command, "/usr/bin/printenv WISPTERM_ENV_TEST", null, false);
+
+    var buf: [4096]u8 = undefined;
+    var collected: std.ArrayListUnmanaged(u8) = .empty;
+    defer collected.deinit(std.testing.allocator);
+    var iterations: usize = 0;
+    var saw_marker = false;
+    while (iterations < 200) : (iterations += 1) {
+        const n = pty.readOutput(&buf) catch |err| switch (err) {
+            error.BrokenPipe => break,
+            error.ReadInterrupted => continue,
+            else => return err,
+        };
+        if (n == 0) break;
+        try collected.appendSlice(std.testing.allocator, buf[0..n]);
+        if (std.mem.indexOf(u8, collected.items, "msys2-marker") != null) {
+            saw_marker = true;
+            break;
+        }
+    }
     try std.testing.expect(saw_marker);
 }
 

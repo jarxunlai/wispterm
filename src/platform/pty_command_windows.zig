@@ -1,6 +1,7 @@
 const std = @import("std");
 const windows = std.os.windows;
 const ssh_connection = @import("../ssh/connection.zig");
+const shell_env = @import("shell_env.zig");
 
 const PseudoConsoleHandle = windows.HANDLE;
 pub const CommandLineBuffer = [256]u16;
@@ -565,14 +566,20 @@ fn allocTerminalEnvironmentBlock(
     advertise_terminal_capabilities: bool,
 ) !?[]u16 {
     const launch_kind = launchKindForCommand(command);
-    if (launch_kind == .ssh and !advertise_terminal_capabilities) return null;
+    const user_env = shell_env.entries();
+    if (launch_kind == .ssh and !advertise_terminal_capabilities and user_env.len == 0) return null;
 
     var env = try std.process.getEnvMap(allocator);
     errdefer env.deinit();
-    switch (launch_kind) {
-        .local, .ssh => try applyNativeTerminalEnvironment(&env),
-        .wsl => try applyWslTerminalEnvironment(allocator, &env),
+    if (launch_kind != .ssh or advertise_terminal_capabilities) {
+        switch (launch_kind) {
+            .local, .ssh => try applyNativeTerminalEnvironment(&env),
+            .wsl => try applyWslTerminalEnvironment(allocator, &env),
+        }
     }
+    // User `env = KEY=VALUE` config last, so it overrides the values above
+    // (Ghostty applies `config.env` the same way in termio/Exec.zig).
+    for (user_env) |entry| try env.put(entry.key, entry.value);
 
     const env_block = try std.process.createWindowsEnvBlock(allocator, &env);
     env_map_out.* = env;
@@ -934,6 +941,37 @@ test "windows pty command opts into SSH terminal environment" {
     try std.testing.expect(env_block != null);
     try std.testing.expectEqualStrings("truecolor", env_map.?.get("COLORTERM").?);
     try std.testing.expectEqualStrings("ghostty", env_map.?.get("TERM_PROGRAM").?);
+}
+
+test "windows pty command applies user env config over terminal defaults" {
+    const allocator = std.testing.allocator;
+    var map: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
+    defer map.deinit(allocator);
+    try map.put(allocator, "MSYSTEM", "CLANG64");
+    try map.put(allocator, "TERM_PROGRAM", "custom");
+    try shell_env.set(allocator, &map);
+    defer shell_env.clear();
+
+    const local = try allocCommandLineFromUtf8(allocator, "cmd.exe");
+    defer freeCommandLine(allocator, local);
+    var env_map: ?std.process.EnvMap = null;
+    const env_block = try allocTerminalEnvironmentBlock(allocator, commandLineFromOwned(local), &env_map, false);
+    defer if (env_block) |block| allocator.free(block);
+    defer if (env_map) |*m| m.deinit();
+    try std.testing.expectEqualStrings("CLANG64", env_map.?.get("MSYSTEM").?);
+    try std.testing.expectEqualStrings("custom", env_map.?.get("TERM_PROGRAM").?);
+
+    // SSH without capability advertising still receives the user env (the
+    // inherited COLORTERM/TERM_PROGRAM are not asserted: the test process may
+    // itself run inside a terminal that sets them).
+    const ssh = try allocCommandLineFromUtf8(allocator, "cmd.exe /c ssh.exe -tt user@example.test");
+    defer freeCommandLine(allocator, ssh);
+    var ssh_env: ?std.process.EnvMap = null;
+    const ssh_block = try allocTerminalEnvironmentBlock(allocator, commandLineFromOwned(ssh), &ssh_env, false);
+    defer if (ssh_block) |block| allocator.free(block);
+    defer if (ssh_env) |*m| m.deinit();
+    try std.testing.expect(ssh_block != null);
+    try std.testing.expectEqualStrings("CLANG64", ssh_env.?.get("MSYSTEM").?);
 }
 
 test "windows pty command applies WSL terminal environment bridge" {
