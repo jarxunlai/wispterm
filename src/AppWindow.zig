@@ -146,6 +146,10 @@ const memory_center_renderer = @import("renderer/memory_center_renderer.zig");
 const conversation_center_renderer = @import("renderer/conversation_center_renderer.zig");
 const skill_center_renderer = @import("renderer/skill_center_renderer.zig");
 const port_forwarding_renderer = @import("renderer/port_forwarding_renderer.zig");
+const password_store_renderer = @import("renderer/password_store_renderer.zig");
+const password_store_page = @import("credential/page.zig");
+const password_store = @import("credential/store.zig");
+const input_key = @import("input/key.zig");
 const ai_sidebar = @import("assistant/sidebar/panel.zig");
 pub const ui_perf = @import("ui_perf.zig");
 const log = std.log.scoped(.app_window);
@@ -2282,6 +2286,27 @@ fn renderPortForwardingFrame(active_tab: *TabState, fb_width: c_int, fb_height: 
         left_panels_w,
         aiHistoryContentWidth(fb_width, left_panels_w, right_panels_w),
     );
+}
+
+fn renderPasswordStoreFrame(fb_width: c_int, fb_height: c_int, titlebar_offset: f32, left_panels_w: f32, right_panels_w: f32) void {
+    gpu.state.setViewport(0, 0, @intCast(fb_width), @intCast(fb_height));
+    ui_pipeline.setProjection(@floatFromInt(fb_width), @floatFromInt(fb_height));
+    clearWithBackground(fb_width, fb_height);
+    titlebar.renderTitlebar(@floatFromInt(fb_width), @floatFromInt(fb_height), titlebar_offset);
+    titlebar.renderSidebar(@floatFromInt(fb_width), @floatFromInt(fb_height), titlebar_offset);
+    const content_w = @max(1, @as(f32, @floatFromInt(fb_width)) - left_panels_w - right_panels_w);
+    const state = password_store_page.state();
+    const geo = password_store_renderer.compute(state, @floatFromInt(fb_height), titlebar_offset, left_panels_w, content_w, font.g_titlebar_cell_height);
+    password_store_renderer.render(.{
+        .bg = g_theme.background,
+        .fg = g_theme.foreground,
+        .accent = g_theme.cursor_color,
+        .cell_h = font.g_titlebar_cell_height,
+        .fillQuadAlpha = ui_pipeline.fillQuadAlpha,
+        .roundedQuadAlpha = overlays.renderRoundedQuadAlpha,
+        .renderTextLimited = titlebar.renderTextLimited,
+        .glyphAdvance = titlebar.titlebarGlyphAdvance,
+    }, state, geo, @floatFromInt(fb_height));
 }
 
 fn renderSettingsFrame(fb_width: c_int, fb_height: c_int, titlebar_offset: f32, left_panels_w: f32, right_panels_w: f32) void {
@@ -5015,6 +5040,76 @@ pub fn openSettingsTab() bool {
     return true;
 }
 
+/// Open (or switch to) the Password Store page, reloading the vault from disk.
+pub fn openPasswordStoreTab() bool {
+    const allocator = g_allocator orelse return false;
+    if (!tab.openPasswordStoreTab(allocator)) return false;
+    password_store_page.state().open(allocator);
+    clearUiStateOnTabChange();
+    markUiDirty();
+    return true;
+}
+
+pub fn activePasswordStore() ?*password_store_page.State {
+    const t = tab.activeTab() orelse return null;
+    return if (t.kind == .password_store) password_store_page.state() else null;
+}
+
+pub fn passwordStoreHandleKey(ev: input_key.KeyEvent) UiEffect {
+    const state = activePasswordStore() orelse return .none;
+    if (state.handleKey(ev)) |action| runPasswordStoreAction(state, action);
+    return .repaint;
+}
+
+pub fn passwordStoreCopySelected() UiEffect {
+    const state = activePasswordStore() orelse return .none;
+    if (!state.editing) runPasswordStoreAction(state, .copy_secret);
+    return .repaint;
+}
+
+pub fn passwordStorePaste(text: []const u8) bool {
+    const state = activePasswordStore() orelse return false;
+    return state.paste(text);
+}
+
+fn runPasswordStoreAction(state: *password_store_page.State, action: password_store_page.Action) void {
+    switch (action) {
+        .copy_secret => {
+            const allocator = state.allocator orelse return;
+            const secret = state.revealForCopy() orelse return;
+            defer password_store.wipe(allocator, secret);
+            if (input.copyTextToClipboard(secret)) state.status = .copied;
+        },
+    }
+}
+
+fn passwordStoreGeometry() ?password_store_renderer.Geometry {
+    const win = g_window orelse return null;
+    const fb = window_backend.framebufferSize(win);
+    const left = leftPanelsWidth();
+    const width = @max(1, @as(f32, @floatFromInt(fb.width)) - left - rightPanelsWidthForWindow(fb.width));
+    return password_store_renderer.compute(password_store_page.state(), @floatFromInt(fb.height), currentTitlebarHeight(), left, width, font.g_titlebar_cell_height);
+}
+
+pub fn passwordStoreHandleMousePress(xpos: f64, ypos: f64) bool {
+    const state = activePasswordStore() orelse return false;
+    const geo = passwordStoreGeometry() orelse return false;
+    switch (password_store_renderer.hitTest(geo, @floatCast(xpos), @floatCast(ypos))) {
+        .none => return false,
+        .rail => |index| state.clickRail(index),
+        .row => |row| if (state.clickRow(row)) |action| runPasswordStoreAction(state, action),
+    }
+    markUiDirty();
+    return true;
+}
+
+pub fn passwordStoreHandleMouseWheel(xpos: i32, delta: i32) void {
+    const state = activePasswordStore() orelse return;
+    const geo = passwordStoreGeometry() orelse return;
+    state.scroll(if (delta > 0) -1 else 1, password_store_renderer.overRail(geo, @floatFromInt(xpos)));
+    markUiDirty();
+}
+
 pub fn reopenAiChatTabFromHistorySessionId(session_id: []const u8) bool {
     if (tab.switchToAiTabBySessionId(session_id)) {
         clearUiStateOnTabChange();
@@ -5241,6 +5336,9 @@ pub fn switchTab(idx: usize) void {
     else
         false;
     if (deactivating_settings) overlays.settingsPageDidDeactivate();
+    if (activeTab()) |active| {
+        if (active.kind == .password_store and idx != active_tab_state.g_active_tab) password_store_page.state().didDeactivate();
+    }
     tab.switchTab(idx);
     clearUiStateOnTabChange();
 }
@@ -5636,6 +5734,8 @@ fn renderResizeFrame(width: i32, height: i32) void {
                 renderPortForwardingFrame(active_tab, fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
             } else if (active_tab.kind == .settings) {
                 renderSettingsFrame(fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
+            } else if (active_tab.kind == .password_store) {
+                renderPasswordStoreFrame(fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
             } else if (split_layout.soleTerminalSurface()) |surface| {
                 // Single surface: simple render path
                 const rend = &surface.surface_renderer;
@@ -8604,7 +8704,7 @@ fn runMainLoop(self: *AppWindow) !void {
             control_api.syncPanes(allocator);
             control_api.syncUiState(allocator);
             syncImeCaretPosition(win, split_count);
-            if (active_tab.kind != .ai_chat and active_tab.kind != .ai_history and active_tab.kind != .memory_center and active_tab.kind != .conversation_center and active_tab.kind != .skill_center and active_tab.kind != .port_forwarding and active_tab.kind != .settings and synchronizedOutputPendingForVisibleSplits(split_count)) {
+            if (active_tab.kind != .ai_chat and active_tab.kind != .ai_history and active_tab.kind != .memory_center and active_tab.kind != .conversation_center and active_tab.kind != .skill_center and active_tab.kind != .port_forwarding and active_tab.kind != .settings and active_tab.kind != .password_store and synchronizedOutputPendingForVisibleSplits(split_count)) {
                 // Block instead of spinning at ~1kHz: the IO thread posts a
                 // wakeup when the application ends synchronized output (or new
                 // output arrives), and the timeout bounds the watchdog check.
@@ -8629,6 +8729,8 @@ fn runMainLoop(self: *AppWindow) !void {
                 renderPortForwardingFrame(active_tab, fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
             } else if (active_tab.kind == .settings) {
                 renderSettingsFrame(fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
+            } else if (active_tab.kind == .password_store) {
+                renderPasswordStoreFrame(fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
             } else if (post_process.g_post_enabled and activeSurface() != null) {
                 // Post-processing path: only render focused surface for now.
                 // (With no focused terminal — e.g. a preview pane focused — fall

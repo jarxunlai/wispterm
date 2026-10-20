@@ -98,6 +98,10 @@ tested passes.
 - Live config reload is not implemented; config changes require restart.
 - Font family enumeration is incomplete; exact `font-family` values can work,
   but picker/autocomplete results may be empty.
+- The Password Store has no Secret Service (libsecret) integration: its
+  encryption key is an owner-only `passwords.key` file next to the vault, so a
+  same-user process can decrypt it. macOS (Keychain) and Windows (DPAPI) keep
+  the key out of the config directory.
 - Off-screen window guards are incomplete.
 
 ## Cross-Platform

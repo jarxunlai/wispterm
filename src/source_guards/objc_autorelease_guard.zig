@@ -33,6 +33,7 @@ const bridges = [_]Bridge{
     .{ .path = "platform/remote_transport_macos_bridge.m", .source = @embedFile("../platform/remote_transport_macos_bridge.m") },
     .{ .path = "platform/services_macos_bridge.m", .source = @embedFile("../platform/services_macos_bridge.m") },
     .{ .path = "platform/text_macos_bridge.m", .source = @embedFile("../platform/text_macos_bridge.m") },
+    .{ .path = "platform/vault_key_macos_bridge.m", .source = @embedFile("../platform/vault_key_macos_bridge.m") },
     .{ .path = "platform/webview_macos_bridge.m", .source = @embedFile("../platform/webview_macos_bridge.m") },
     .{ .path = "platform/window_macos_bridge.m", .source = @embedFile("../platform/window_macos_bridge.m") },
     .{ .path = "renderer/gpu/metal/bridge.m", .source = @embedFile("../renderer/gpu/metal/bridge.m") },

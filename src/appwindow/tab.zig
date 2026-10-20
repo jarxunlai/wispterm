@@ -21,6 +21,7 @@ const conversation_center_session = @import("../conversation_center/session.zig"
 const ai_history_source = @import("../terminal_agents/sessions/source.zig");
 const skill_center = @import("../skill/center.zig");
 const port_forwarding = @import("../port_forward/forwarding.zig");
+const password_store_page = @import("../credential/page.zig");
 const ai_history_time = @import("../terminal_agents/sessions/time.zig");
 const agent_history = @import("../agent/history.zig");
 const platform_pty_command = @import("../platform/pty_command.zig");
@@ -101,6 +102,7 @@ pub const TabState = struct {
         skill_center,
         port_forwarding,
         settings,
+        password_store,
     };
 
     /// Get the focused surface in this tab, or null if tree is empty
@@ -147,6 +149,9 @@ pub const TabState = struct {
         }
         if (self.kind == .settings) {
             return i18n.s().settings_title;
+        }
+        if (self.kind == .password_store) {
+            return i18n.s().password_store_title;
         }
         const surface = self.focusedSurface() orelse return "wispterm";
         return surface.getTitle();
@@ -239,6 +244,8 @@ pub const TabState = struct {
                 }
             },
             .settings => {},
+            // Wipes any revealed password and the vault from memory.
+            .password_store => password_store_page.state().close(),
         }
     }
 };
@@ -904,6 +911,26 @@ pub fn openSettingsTab(allocator: std.mem.Allocator) bool {
 
     const t = allocator.create(TabState) catch return false;
     t.* = .{ .kind = .settings, .tree = .empty };
+
+    g_tabs[g_tab_count] = t;
+    active_tab_state.g_active_tab = g_tab_count;
+    g_tab_count += 1;
+    return true;
+}
+
+/// Open the singleton Password Store page, or switch to it when already open.
+/// Its state lives in credential/page.zig, not on the tab.
+pub fn openPasswordStoreTab(allocator: std.mem.Allocator) bool {
+    for (0..g_tab_count) |idx| {
+        const existing = g_tabs[idx] orelse continue;
+        if (existing.kind != .password_store) continue;
+        switchTab(idx);
+        return true;
+    }
+    if (g_tab_count >= MAX_TABS) return false;
+
+    const t = allocator.create(TabState) catch return false;
+    t.* = .{ .kind = .password_store, .tree = .empty };
 
     g_tabs[g_tab_count] = t;
     active_tab_state.g_active_tab = g_tab_count;
@@ -1619,6 +1646,7 @@ pub fn commitTabRename() void {
                     .skill_center => {},
                     .port_forwarding => {},
                     .settings => {},
+                    .password_store => {},
                 }
             }
         }
@@ -2210,6 +2238,7 @@ fn applyRestoredTabMetadata(t: *TabState, snap: *const session_persist.TabSnap) 
         .skill_center => {},
         .port_forwarding => {},
         .settings => {},
+        .password_store => {},
     }
 }
 
