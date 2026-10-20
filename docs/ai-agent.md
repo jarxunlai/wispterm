@@ -220,20 +220,34 @@ demand.
 
 ## Password Store
 
-A small plain-text store for the passwords you type most (root, mysql, a
-jump host, ...), shared by you and the agent. The file is `passwords` in the
-config directory (next to `ssh_hosts`), one `name = secret` per line, `#`
-comments allowed; it is created owner-only (0600) on macOS/Linux.
+An encrypted store for the passwords you type most (root, mysql, a jump host,
+...), shared by you and the agent. Open it from the Command Center
+(`Ctrl+Shift+P`, `Cmd+Shift+P` on macOS) → **Password Store**: a
+Settings-style page with your entries on the left and the selected entry's
+fields on the right (name, username, password, note, agent access).
 
-- **You**: Command Center (`Ctrl+Shift+P`, `Cmd+Shift+P` on macOS) → **Password Store** opens the
-  file in your editor. Afterwards, type an entry name (or `pass`) in the
-  Command Center and press Enter on the `Password: <name>` row to copy the
-  secret to the clipboard, then paste it into the terminal.
+- **Encrypted at rest.** Each password is sealed with XChaCha20-Poly1305 in
+  `passwords` in the config directory. The key is never stored next to it: it
+  lives in the login Keychain on macOS and in a DPAPI-sealed `passwords.key`
+  on Windows (Linux, still experimental, falls back to an owner-only
+  `passwords.key`). Reading the file — or letting a shell command `cat` it —
+  shows names and notes but no password. An older plain `name = secret` file
+  is encrypted in place the first time it is loaded.
+- **Hidden by default.** The page shows `••••••••`; turn on **Show password**
+  to see it (it is hidden again when you switch entries), or use **Copy
+  password** / the Copy shortcut to put it on the clipboard. Editing a
+  password types (or pastes) a replacement; the old one is never shown.
+- **Keys:** `↑/↓` move, `Enter`/`→` open an entry or edit/toggle a field,
+  `←`/`Esc` back to the list, `Delete` (or `⌫` in the list) then `Enter` removes an entry. Mouse
+  clicks and the wheel work too. You can also type an entry name (or `pass`)
+  in the Command Center and press Enter on its `Password: <name>` row to copy it.
 - **The agent**: the `password_get` tool reads one entry by name for
   privileged work (sudo, a DB login, an SSH password). Every reveal shows an
   approval prompt naming the entry, at every permission level including
-  `full`; an unknown name returns only the list of available names. Disable
-  the tool in Skill Center if the agent should never see secrets.
+  `full`, and the password is decrypted only after you approve. Turn off
+  **Allow agent** on an entry to refuse it outright. An unknown name returns
+  the available names with their username and note (never a password).
+  Disable the tool in Skill Center if the agent should never see secrets.
 
 ## Markdown in replies
 

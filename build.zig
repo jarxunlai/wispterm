@@ -36,6 +36,7 @@ const windows_system_libraries = [_][]const u8{
     "ole32",
     "psapi",
     "shcore", // GetDpiForMonitor for render diagnostics (per-monitor DPI)
+    "crypt32", // DPAPI seals the password store key
 };
 
 const macos_app_frameworks = [_][]const u8{
@@ -50,6 +51,7 @@ const macos_app_frameworks = [_][]const u8{
     "CoreFoundation",
     "Carbon",
     "ImageIO", // PDF preview page rasters are PNG-encoded with ImageIO
+    "Security", // password store key lives in the login Keychain
 };
 
 const macos_objective_c_sources = [_][]const u8{
@@ -62,6 +64,7 @@ const macos_objective_c_sources = [_][]const u8{
     "src/platform/http_client_macos_bridge.m",
     "src/platform/pdf_render_macos_bridge.m",
     "src/platform/remote_transport_macos_bridge.m",
+    "src/platform/vault_key_macos_bridge.m",
 };
 
 const MacosBundleMetadata = struct {

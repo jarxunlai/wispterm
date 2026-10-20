@@ -527,7 +527,7 @@ fn commandPaletteOpenWithMode(mode: CommandPaletteMode) void {
     snippetsState().loaded = false;
     // Same for recipes: re-scan <config-dir>/recipes on each palette open.
     if (AppWindow.g_allocator) |alloc| recipe_ui.invalidateRecipeList(alloc);
-    if (AppWindow.g_allocator) |alloc| credential_store.invalidatePaletteList(alloc);
+    credential_store.invalidatePaletteList();
     if (!commandPaletteState().visible) {
         g_overlay_anim.palette_opened_at_ms = std.time.milliTimestamp();
         g_overlay_anim.palette_closing_at_ms = 0;
@@ -996,7 +996,7 @@ fn executeCommand(action: CommandAction) void {
         .star_repo => openRepoStar(),
         .save_workspace_recipe => openRecipeForm(),
         .open_recipe => showStatusToast(i18n.s().toast_recipe_open_hint),
-        .open_password_store => openPasswordStore(),
+        .open_password_store => _ = AppWindow.openPasswordStoreTab(),
         .import_recipe => {
             if (AppWindow.g_allocator) |alloc| AppWindow.importWorkspaceRecipeFromFile(alloc);
         },
@@ -1533,15 +1533,13 @@ fn executePaletteItem(item: PaletteItem) void {
     }
 }
 
-fn openPasswordStore() void {
-    const alloc = AppWindow.g_allocator orelse return;
-    if (!credential_store.openInEditor(alloc)) std.debug.print("[password-store] failed to open editor\n", .{});
-}
-
 fn copyPasswordFromPalette(pw_idx: usize) void {
+    const alloc = AppWindow.g_allocator orelse return;
     const items = credential_store.paletteItems();
     if (pw_idx >= items.len) return;
-    if (!AppWindow.input.copyTextToClipboard(items[pw_idx].secret)) return;
+    const secret = credential_store.reveal(alloc, &items[pw_idx]) catch return;
+    defer credential_store.wipe(alloc, secret);
+    if (secret.len == 0 or !AppWindow.input.copyTextToClipboard(secret)) return;
     var msg_buf: [160]u8 = undefined;
     const msg = std.fmt.bufPrint(&msg_buf, "{s}{s}", .{ i18n.s().toast_password_copied, items[pw_idx].name }) catch i18n.s().toast_password_copied;
     showStatusToast(msg);

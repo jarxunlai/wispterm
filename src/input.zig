@@ -90,6 +90,7 @@ pub const pasteFromClipboard = clipboard.pasteFromClipboard;
 const pasteClipboardIntoBrowserUrlBar = clipboard.pasteClipboardIntoBrowserUrlBar;
 const pasteClipboardIntoSessionLauncher = clipboard.pasteClipboardIntoSessionLauncher;
 const pasteClipboardIntoMcpForm = clipboard.pasteClipboardIntoMcpForm;
+const pasteClipboardIntoPasswordStore = clipboard.pasteClipboardIntoPasswordStore;
 const pasteFromClipboardIntoAiChat = clipboard.pasteFromClipboardIntoAiChat;
 const pasteImageIntoAiChat = clipboard.pasteImageIntoAiChat;
 pub const pasteImageFromClipboard = clipboard.pasteImageFromClipboard;
@@ -588,6 +589,40 @@ test "input: settings page dispatchKey returns repaint effect" {
     try std.testing.expect(effect.consumed);
     try std.testing.expect(effect.needs_rebuild);
     try std.testing.expect(effect.cells_invalid);
+}
+
+test "input: password store page keys and typing request a repaint" {
+    try skipUnlessInputRendererShard();
+    const previous_keybinds = AppWindow.g_keybinds;
+    const previous_tabs = tab.g_tabs;
+    const previous_count = tab.g_tab_count;
+    const previous_active = active_tab_state.g_active_tab;
+    var page_tab = tab.TabState{ .kind = .password_store, .tree = .empty };
+    defer {
+        AppWindow.g_keybinds = previous_keybinds;
+        tab.g_tabs = previous_tabs;
+        tab.g_tab_count = previous_count;
+        active_tab_state.g_active_tab = previous_active;
+    }
+
+    AppWindow.g_keybinds = keybind.Set.defaults();
+    tab.g_tabs = .{null} ** tab.MAX_TABS;
+    tab.g_tabs[0] = &page_tab;
+    tab.g_tab_count = 1;
+    active_tab_state.g_active_tab = 0;
+    const page = AppWindow.activePasswordStore() orelse return error.ExpectedPasswordStore;
+    page.open(std.testing.allocator); // test builds never touch the real vault
+    defer page.close();
+
+    const nav = dispatchKey(arrow_down_event);
+    try std.testing.expect(nav.consumed and nav.needs_rebuild and nav.cells_invalid);
+
+    // Enter on "New entry" creates one and starts editing its name.
+    _ = dispatchKey(enter_event);
+    try std.testing.expect(page.editing);
+    const typed = dispatchChar(.{ .codepoint = 'k' });
+    try std.testing.expect(typed.needs_rebuild and typed.cells_invalid);
+    try std.testing.expectEqualStrings("k", page.draftText());
 }
 
 test "input: port forwarding arrow navigation requests a repaint" {
@@ -2907,6 +2942,11 @@ fn dispatchChar(ev: platform_input.CharEvent) ui_effect.UiEffect {
         }
         return .none;
     }
+    if (AppWindow.activePasswordStore()) |password_page| {
+        // ctrl == alt admits plain text and AltGr (Ctrl+Alt) characters.
+        if (!ev.super and ev.ctrl == ev.alt and password_page.insertChar(ev.codepoint)) return input_effects.repaint();
+        return .none;
+    }
     if (AppWindow.activePortForwarding() != null) {
         if (command_char_suppressors.port_forwarding) |codepoint| {
             const suppress = !ev.ctrl and !ev.alt and !ev.super and ev.codepoint == codepoint;
@@ -3443,6 +3483,17 @@ fn dispatchKey(ev: platform_input.KeyEvent) ui_effect.UiEffect {
             closeBrowserPanel();
             return input_effects.repaint();
         }
+    }
+    // Password Store page: after the explorer/rename/URL-bar editors, before
+    // the late keybinds so Copy/Paste act on the page while tab switching and
+    // other configured chords keep working.
+    if (AppWindow.activePasswordStore() != null) {
+        if (actionIs(action, .paste)) return if (pasteClipboardIntoPasswordStore()) input_effects.repaint() else .none;
+        if (actionIs(action, .copy)) return AppWindow.passwordStoreCopySelected();
+        if (action) |app_action| {
+            if (handleConfiguredKeybindAction(app_action, .late)) return .none;
+        }
+        return AppWindow.passwordStoreHandleKey(key_event);
     }
     if (assistant_conversation.current(aiCopilotFocused())) |target| {
         // Accept Cmd (super, macOS) or Ctrl (Windows) for chat editing keys.
@@ -6067,6 +6118,10 @@ fn handleMouseButton(ev: platform_input.MouseButtonEvent) void {
                 if (AppWindow.memoryCenterHandleMousePress(xpos, ypos)) return;
             }
 
+            if (AppWindow.activePasswordStore() != null) {
+                if (AppWindow.passwordStoreHandleMousePress(xpos, ypos)) return;
+            }
+
             if (AppWindow.activeConversationCenter() != null) {
                 if (AppWindow.conversationCenterHandleMousePress(xpos, ypos)) return;
             }
@@ -7367,6 +7422,10 @@ fn handleMouseWheel(ev: platform_input.MouseWheelEvent) void {
     }
     if (AppWindow.activeMemoryCenter() != null) {
         _ = AppWindow.memoryCenterHandleMouseWheel(ev.xpos, ev.ypos, @intCast(ev.delta));
+        return;
+    }
+    if (AppWindow.activePasswordStore() != null) {
+        AppWindow.passwordStoreHandleMouseWheel(ev.xpos, @intCast(ev.delta));
         return;
     }
     if (AppWindow.activeConversationCenter() != null) {

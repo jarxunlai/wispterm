@@ -59,6 +59,7 @@ pub const Strings = struct {
 
     // —— 记忆中心工作台 ——
     memory_center_title: []const u8,
+    password_store_title: []const u8,
     memory_center_source: []const u8,
     memory_center_detail: []const u8,
     memory_source_remembered: []const u8,
@@ -389,6 +390,7 @@ const en = Strings{
     .settings_workbench_footer = "Changes save automatically   Up/Down: navigate   Left/Right: adjust",
 
     .memory_center_title = "Memory Center",
+    .password_store_title = "Password Store",
     .memory_center_source = "SOURCE",
     .memory_center_detail = "Memory Detail",
     .memory_source_remembered = "AI Remembered",
@@ -707,6 +709,7 @@ const zh_CN = Strings{
     .settings_workbench_footer = "配置自动保存   ↑↓：浏览   ←→：调整",
 
     .memory_center_title = "记忆中心",
+    .password_store_title = "密码库",
     .memory_center_source = "来源",
     .memory_center_detail = "记忆详情",
     .memory_source_remembered = "AI 记忆",
@@ -1215,7 +1218,7 @@ pub fn commandDetail(action: CommandAction) ?[]const u8 {
         .open_recipe => "把已保存的 Recipe 恢复到新窗口（在这里搜索名称）",
         .import_recipe => "把分享来的 Recipe JSON 文件导入到你的 Recipe 列表",
         .export_recipe => "把当前窗口的布局导出成可分享的 Recipe JSON 文件",
-        .open_password_store => "编辑已保存的密码；在这里输入名称并回车即可复制",
+        .open_password_store => "管理加密保存的密码；在这里输入名称并回车即可复制",
     };
 }
 
