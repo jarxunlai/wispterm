@@ -39,6 +39,7 @@
 - **Send to Chat** —— 把终端选中文本（或最近输出）作为折叠上下文卡片发给 Copilot，可走命令面板或可绑定的 `send_to_copilot` 快捷键动作
 - **分叉会话** —— 在任意 rewind 点复制当前 AI 对话（rewind 选择器按 `f`，或从命令面板整体复制），带着共享历史分别尝试不同方案
 - **工作区 Recipe** —— 把当前窗口的标签/分屏布局保存为命名 recipe，从命令面板一键恢复到新窗口，并可导出/导入 recipe JSON 文件分享工作环境
+- **密码库** —— 命令中心 → 密码库，打开类似设置页的页面管理 root/mysql 等密码；密码在本机加密保存（密钥由 macOS 钥匙串 / Windows DPAPI 保管），默认隐藏，显示或复制需手动操作；Agent 通过 `password_get` 读取前每次都需你批准
 - **AI 历史浏览器** —— 浏览本地、WSL 与 SSH 上的 Codex / Claude Code / Kimi Code / OpenCode 历史，并从原始项目目录恢复会话
 - **Kitty 图形协议** —— 通过 `imgcat.py` / `pdfcat.py` 在远程 shell 中内联显示图片和 PDF
 - **可选的远程访问** —— 通过 Cloudflare 托管的中继分享会话密钥（默认关闭）
@@ -57,7 +58,7 @@
 
 ## 版本
 
-桌面应用版本来自仓库根目录的 `build.zig.zon`（当前为 `1.40.6`），也是
+桌面应用版本来自仓库根目录的 `build.zig.zon`（当前为 `1.41.0`），也是
 `wispterm --version`、release notes、桌面发布包和命令中心 `Version` 条目使用的版本。
 
 `remote/` 下的 WispTerm Remote 网页控制台/中继有独立的 npm/web 版本（当前为
@@ -280,7 +281,7 @@ MIT
 
 ## 引用
 
-Xu, Z.-G. (2026). *WispTerm* (Version 1.40.6) [Computer software]. Zenodo.
+Xu, Z.-G. (2026). *WispTerm* (Version 1.41.0) [Computer software]. Zenodo.
 https://doi.org/10.5281/zenodo.20660541
 
 可直接复制的致谢模板：
@@ -289,6 +290,6 @@ https://doi.org/10.5281/zenodo.20660541
 我们在生命科学数据分析中使用 WispTerm 作为计算环境的一部分，用于远程计算流程、
 可重复的命令行处理，以及相关文献与分析代码的整理。
 
-Xu, Z.-G. (2026). WispTerm (Version 1.40.6) [Computer software]. Zenodo.
+Xu, Z.-G. (2026). WispTerm (Version 1.41.0) [Computer software]. Zenodo.
 https://doi.org/10.5281/zenodo.20660541
 ```
