@@ -17,6 +17,7 @@ const platform_com = @import("platform/com.zig");
 const platform_display = @import("platform/display.zig");
 const font_backend = @import("platform/font_backend.zig");
 const platform_pty_command = @import("platform/pty_command.zig");
+const platform_shell_env = @import("platform/shell_env.zig");
 const platform_notifications = @import("platform/notifications.zig");
 const platform_thread_control = @import("platform/thread_control.zig");
 const window_backend = @import("platform/window_backend.zig");
@@ -251,6 +252,11 @@ pub fn init(allocator: std.mem.Allocator, cfg: Config) !App {
             initial_cwd_buf[initial_cwd_len] = 0;
         }
     }
+
+    // Ghostty `env` config: shared by every PTY the platform backends spawn.
+    platform_shell_env.set(allocator, &cfg.env) catch |err| {
+        std.log.warn("failed to apply env config: {}", .{err});
+    };
 
     var app = App{
         .allocator = allocator,
@@ -555,6 +561,9 @@ pub fn updateConfig(self: *App, cfg: *const Config) void {
     defer self.mutex.unlock();
 
     self.scrollback_limit = cfg.@"scrollback-limit";
+    platform_shell_env.set(self.allocator, &cfg.env) catch |err| {
+        std.log.warn("failed to apply env config: {}", .{err});
+    };
     self.replaceStr(&self.font_family, cfg.@"font-family");
     self.replaceOptStr(&self.font_family_cjk, cfg.@"font-family-cjk");
     self.replaceOptStr(&self.font_family_fallback, cfg.@"font-family-fallback");

@@ -357,6 +357,12 @@ shell: []const u8 = "",
 /// Working directory for the first local terminal surface (unset = inherit app cwd).
 @"working-directory": ?[]const u8 = null,
 
+/// Extra environment variables for every local PTY child, Ghostty's `env`
+/// key: repeat `env = KEY=VALUE`; `env =` resets the map, `env = KEY=` drops
+/// KEY, a later KEY overwrites an earlier one. Strings are owned by
+/// `_owned_strings`; the map itself is freed in `deinit`.
+env: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+
 /// Name of the saved AI profile used as the default for startup auto-open,
 /// remote auto-open, and the "New Agent" command. Empty falls back to the
 /// first saved profile.
@@ -619,6 +625,8 @@ pub fn deinit(self: *const Config, allocator: std.mem.Allocator) void {
     // We need a mutable copy to deinit the list itself
     var list = self._owned_strings;
     list.deinit(allocator);
+    var env = self.env;
+    env.deinit(allocator);
 }
 
 // ============================================================================
@@ -1313,6 +1321,8 @@ fn applyKeyValue(self: *Config, allocator: std.mem.Allocator, key: []const u8, v
         } else {
             log.warn("invalid quake-mode value: {s}", .{value});
         }
+    } else if (std.mem.eql(u8, key, "env")) {
+        self.applyEnv(allocator, value);
     } else if (std.mem.eql(u8, key, "keybind")) {
         self.keybinds.apply(value) catch |err| {
             log.warn("invalid keybind '{s}': {}", .{ value, err });
@@ -1321,6 +1331,35 @@ fn applyKeyValue(self: *Config, allocator: std.mem.Allocator, key: []const u8, v
         // Silently ignore unknown keys (theme files reuse the same format
         // and may contain keys we don't handle, like palette).
     }
+}
+
+/// Ghostty `RepeatableStringMap.parseCLI` semantics for `env`.
+fn applyEnv(self: *Config, allocator: std.mem.Allocator, value: []const u8) void {
+    if (value.len == 0) {
+        self.env.clearRetainingCapacity();
+        return;
+    }
+    const eq = std.mem.indexOfScalar(u8, value, '=') orelse {
+        log.warn("invalid env '{s}': expected KEY=VALUE", .{value});
+        return;
+    };
+    const key = std.mem.trim(u8, value[0..eq], &std.ascii.whitespace);
+    const val = std.mem.trim(u8, value[eq + 1 ..], &std.ascii.whitespace);
+    if (key.len == 0) {
+        log.warn("invalid env '{s}': empty key", .{value});
+        return;
+    }
+    if (val.len == 0) {
+        _ = self.env.orderedRemove(key);
+        return;
+    }
+    const owned_val = self.dupeString(allocator, val) orelse return;
+    if (self.env.getPtr(key)) |slot| {
+        slot.* = owned_val;
+        return;
+    }
+    const owned_key = self.dupeString(allocator, key) orelse return;
+    self.env.put(allocator, owned_key, owned_val) catch {};
 }
 
 /// Handle the `config-file` directive: load an additional config file.
@@ -2170,6 +2209,30 @@ test "config: working-directory defaults unset and parses paths" {
 
     cfg.applyKeyValue(allocator, "working-directory", "", ".");
     try std.testing.expect(cfg.@"working-directory" == null);
+}
+
+test "config: env follows ghostty repeatable map semantics" {
+    const allocator = std.testing.allocator;
+    var cfg: Config = .{};
+    defer cfg.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), cfg.env.count());
+
+    cfg.parseContent(allocator,
+        \\env = MSYSTEM=CLANG64
+        \\env = "MSYS = winsymlinks:nativestrict"
+        \\env = PI_NO_GLYPH_PROTOCOL=1
+        \\env = MSYSTEM=UCRT64
+        \\env = PI_NO_GLYPH_PROTOCOL=
+        \\env = broken
+    , ".");
+    try std.testing.expectEqual(@as(usize, 2), cfg.env.count());
+    try std.testing.expectEqualStrings("UCRT64", cfg.env.get("MSYSTEM").?);
+    try std.testing.expectEqualStrings("winsymlinks:nativestrict", cfg.env.get("MSYS").?);
+    try std.testing.expect(cfg.env.get("PI_NO_GLYPH_PROTOCOL") == null);
+
+    cfg.applyKeyValue(allocator, "env", "", ".");
+    try std.testing.expectEqual(@as(usize, 0), cfg.env.count());
 }
 
 test "config: help lists working-directory CLI option" {

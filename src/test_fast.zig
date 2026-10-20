@@ -571,4 +571,6 @@ test {
     if (@import("builtin").os.tag != .windows) {
         _ = @import("platform/pty_command_unsupported.zig");
     }
+    // Pure holder for the `env = KEY=VALUE` config applied to PTY children.
+    _ = @import("platform/shell_env.zig");
 }
