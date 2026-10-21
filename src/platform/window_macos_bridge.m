@@ -98,9 +98,19 @@ struct WispTermMacWindowState {
     int32_t ime_caret_x;
     int32_t ime_caret_y;
     int32_t ime_caret_height;
+    // UTF-8 copy of the marked text for the renderer. Written on the main
+    // thread, read by the window's loop thread: guarded by input_lock.
     char ime_preedit[1024];
     size_t ime_preedit_len;
+    // The same marked text in NSTextInputClient units. NSRange counts UTF-16
+    // code units, so the UTF-8 byte length above is not a valid range to hand
+    // back to the input method. Main thread only.
+    NSUInteger ime_marked_length;
+    NSRange ime_marked_selection;
     NSEventModifierFlags insert_text_modifier_flags;
+    // True while -keyDown: runs -interpretKeyEvents:. Text input outside it
+    // (dictation, voice input methods) has no NSEvent to wake the loop.
+    bool in_key_down;
     // Guards the key/char/mouse/file-drop rings below. For windows running on
     // a worker thread (every window past the first: Dock reopen / new-window),
     // AppKit dispatches input on the main thread while that window's worker
@@ -143,6 +153,7 @@ struct WispTermMacWindowState {
 // need it early so a worker window blocked in its idle wait notices
 // close_requested promptly instead of sleeping out its full timeout.
 static void wispterm_macos_worker_wakeup_signal(void);
+void wispterm_macos_post_wakeup(void);
 
 // -[NSWindow isZoomed] is not a cheap getter: AppKit recomputes the window's
 // standard frame on every call (-_standardFrameForScreen: walks the drawers
@@ -851,7 +862,21 @@ void wispterm_macos_window_test_insert_text_after_key(void *handle, uint32_t cod
     }
 }
 
-static void wispterm_macos_set_preedit(WispTermMacWindowState *state, id string_or_attributed) {
+// Wake the window's render loop after committed text or the marked text
+// changed. Inside -keyDown: the main loop is already handling that key's
+// NSEvent, but dictation and voice input methods (e.g. 豆包) deliver text from a
+// run-loop source with no key event at all, and nothing else would break the
+// main thread out of -nextEventMatchingMask: until its idle timeout. Worker
+// windows only need their wakeup condition signalled.
+static void wispterm_macos_wake_for_text_input(WispTermMacWindowState *state) {
+    if (state != NULL && state->in_key_down) {
+        wispterm_macos_worker_wakeup_signal();
+    } else {
+        wispterm_macos_post_wakeup();
+    }
+}
+
+static void wispterm_macos_set_preedit(WispTermMacWindowState *state, id string_or_attributed, NSRange selection) {
     if (state == NULL) return;
     NSString *string = nil;
     if (string_or_attributed != nil) {
@@ -859,17 +884,35 @@ static void wispterm_macos_set_preedit(WispTermMacWindowState *state, id string_
             ? [(NSAttributedString *)string_or_attributed string]
             : (NSString *)string_or_attributed;
     }
-    if (string == nil || string.length == 0) {
-        state->ime_preedit_len = 0;
-        state->ime_preedit[0] = 0;
-        return;
+
+    const NSUInteger marked_length = string != nil ? string.length : 0;
+    NSData *data = marked_length > 0 ? [string dataUsingEncoding:NSUTF8StringEncoding] : nil;
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    NSUInteger len = data.length < sizeof(state->ime_preedit) ? data.length : sizeof(state->ime_preedit) - 1;
+    // Long dictation can overflow the buffer; never cut a UTF-8 sequence in
+    // half, or the renderer rejects the whole preedit as invalid UTF-8.
+    if (len < data.length) {
+        while (len > 0 && (bytes[len] & 0xC0) == 0x80) len -= 1;
     }
 
-    NSData *data = [string dataUsingEncoding:NSUTF8StringEncoding];
-    NSUInteger len = data.length < sizeof(state->ime_preedit) ? data.length : sizeof(state->ime_preedit) - 1;
-    memcpy(state->ime_preedit, data.bytes, len);
+    if (selection.location == NSNotFound || selection.location > marked_length) {
+        selection = NSMakeRange(marked_length, 0);
+    }
+    if (selection.length > marked_length - selection.location) {
+        selection.length = marked_length - selection.location;
+    }
+    state->ime_marked_length = marked_length;
+    state->ime_marked_selection = selection;
+
+    os_unfair_lock_lock(&state->input_lock);
+    const bool changed = len != state->ime_preedit_len ||
+        (len > 0 && memcmp(state->ime_preedit, bytes, len) != 0);
+    if (len > 0) memcpy(state->ime_preedit, bytes, len);
     state->ime_preedit[len] = 0;
     state->ime_preedit_len = len;
+    os_unfair_lock_unlock(&state->input_lock);
+
+    if (changed) wispterm_macos_wake_for_text_input(state);
 }
 
 @implementation WispTermMacContentView
@@ -891,14 +934,20 @@ static void wispterm_macos_set_preedit(WispTermMacWindowState *state, id string_
     // arrives separately via -insertText:, so the raw Return must not also reach
     // the app. Only push the raw key event when there is no composition; let
     // -interpretKeyEvents: route composing keystrokes to the IME.
-    if (self.state != NULL) self.state->insert_text_modifier_flags = event.modifierFlags;
+    if (self.state != NULL) {
+        self.state->insert_text_modifier_flags = event.modifierFlags;
+        self.state->in_key_down = true;
+    }
     if (self.state != NULL && ![self hasMarkedText]) {
         NSString *characters = wispterm_macos_key_characters(event);
         uintptr_t key_code = wispterm_macos_map_key_code(event.keyCode, characters);
         wispterm_macos_push_key_event(self.state, wispterm_macos_key_event(key_code, event.modifierFlags));
     }
     [self interpretKeyEvents:@[event]];
-    if (self.state != NULL) self.state->insert_text_modifier_flags = 0;
+    if (self.state != NULL) {
+        self.state->insert_text_modifier_flags = 0;
+        self.state->in_key_down = false;
+    }
 }
 
 - (BOOL)performKeyEquivalent:(NSEvent *)event {
@@ -914,10 +963,13 @@ static void wispterm_macos_set_preedit(WispTermMacWindowState *state, id string_
 }
 
 - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
+    // The only text a replacement range can address is the marked text this
+    // commit replaces; the terminal has no editable document behind it.
     (void)replacementRange;
     NSEventModifierFlags flags = self.state != NULL ? self.state->insert_text_modifier_flags : 0;
     wispterm_macos_push_string(self.state, string, flags);
-    wispterm_macos_set_preedit(self.state, nil);
+    wispterm_macos_set_preedit(self.state, nil, NSMakeRange(NSNotFound, 0));
+    if (self.state != NULL && !self.state->in_key_down) wispterm_macos_wake_for_text_input(self.state);
 }
 
 - (void)doCommandBySelector:(SEL)selector {
@@ -925,26 +977,33 @@ static void wispterm_macos_set_preedit(WispTermMacWindowState *state, id string_
 }
 
 - (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange {
-    (void)selectedRange;
     (void)replacementRange;
-    wispterm_macos_set_preedit(self.state, string);
+    wispterm_macos_set_preedit(self.state, string, selectedRange);
 }
 
 - (void)unmarkText {
-    wispterm_macos_set_preedit(self.state, nil);
+    wispterm_macos_set_preedit(self.state, nil, NSMakeRange(NSNotFound, 0));
 }
 
 - (BOOL)hasMarkedText {
-    return self.state != NULL && self.state->ime_preedit_len > 0;
+    return self.state != NULL && self.state->ime_marked_length > 0;
 }
 
 - (NSRange)markedRange {
     if (![self hasMarkedText]) return NSMakeRange(NSNotFound, 0);
-    return NSMakeRange(0, self.state->ime_preedit_len);
+    return NSMakeRange(0, self.state->ime_marked_length);
 }
 
+// Dictation, and voice input methods built on the same input-method path,
+// probe -selectedRange before they start and refuse to run when the client
+// reports no insertion point. {NSNotFound, 0} says exactly that, so dictation
+// never started and nothing was inserted (issue #671; the same bug kitty,
+// Emacs 30 and others hit). The terminal has no editable document, so report
+// an empty caret at 0 as Ghostty does, or while composing, the input method's
+// own selection inside the marked text, which starts at 0.
 - (NSRange)selectedRange {
-    return NSMakeRange(NSNotFound, 0);
+    if (![self hasMarkedText]) return NSMakeRange(0, 0);
+    return self.state->ime_marked_selection;
 }
 
 - (NSArray<NSAttributedStringKey> *)validAttributesForMarkedText {
@@ -1178,6 +1237,9 @@ void *wispterm_macos_window_create(
             state->ime_caret_height = 16;
             state->ime_preedit[0] = 0;
             state->ime_preedit_len = 0;
+            state->ime_marked_length = 0;
+            state->ime_marked_selection = NSMakeRange(0, 0);
+            state->in_key_down = false;
             view.state = state;
             wispterm_macos_sync_layer(state);
 
@@ -1398,8 +1460,10 @@ bool wispterm_macos_window_pop_file_drop_event(void *handle, WispTermMacFileDrop
 size_t wispterm_macos_window_copy_ime_preedit(void *handle, char *out, size_t out_len) {
     WispTermMacWindowState *state = wispterm_macos_state(handle);
     if (state == NULL || out == NULL || out_len == 0) return 0;
+    os_unfair_lock_lock(&state->input_lock);
     size_t len = state->ime_preedit_len < out_len ? state->ime_preedit_len : out_len;
     memcpy(out, state->ime_preedit, len);
+    os_unfair_lock_unlock(&state->input_lock);
     return len;
 }
 
@@ -1493,7 +1557,47 @@ void wispterm_macos_window_test_set_ime_preedit(void *handle, const char *text) 
     WispTermMacWindowState *state = wispterm_macos_state(handle);
     if (state == NULL || text == NULL) return;
     @autoreleasepool {
-        wispterm_macos_set_preedit(state, [NSString stringWithUTF8String:text]);
+        wispterm_macos_set_preedit(state, [NSString stringWithUTF8String:text], NSMakeRange(NSNotFound, 0));
+    }
+}
+
+// Test-only: drive the real NSTextInputClient methods the way dictation and
+// voice input methods do: from outside -keyDown:, with no key event.
+void wispterm_macos_window_test_set_marked_text(void *handle, const char *text, uint64_t selection_location, uint64_t selection_length) {
+    WispTermMacWindowState *state = wispterm_macos_state(handle);
+    if (state == NULL || text == NULL) return;
+    @autoreleasepool {
+        [state->view setMarkedText:[NSString stringWithUTF8String:text]
+                     selectedRange:NSMakeRange((NSUInteger)selection_location, (NSUInteger)selection_length)
+                  replacementRange:NSMakeRange(NSNotFound, 0)];
+    }
+}
+
+void wispterm_macos_window_test_insert_text(void *handle, const char *text) {
+    WispTermMacWindowState *state = wispterm_macos_state(handle);
+    if (state == NULL || text == NULL) return;
+    @autoreleasepool {
+        [state->view insertText:[NSString stringWithUTF8String:text] replacementRange:NSMakeRange(NSNotFound, 0)];
+    }
+}
+
+void wispterm_macos_window_test_selected_range(void *handle, uint64_t *location, uint64_t *length) {
+    WispTermMacWindowState *state = wispterm_macos_state(handle);
+    if (state == NULL || location == NULL || length == NULL) return;
+    @autoreleasepool {
+        NSRange range = [state->view selectedRange];
+        *location = range.location;
+        *length = range.length;
+    }
+}
+
+void wispterm_macos_window_test_marked_range(void *handle, uint64_t *location, uint64_t *length) {
+    WispTermMacWindowState *state = wispterm_macos_state(handle);
+    if (state == NULL || location == NULL || length == NULL) return;
+    @autoreleasepool {
+        NSRange range = [state->view markedRange];
+        *location = range.location;
+        *length = range.length;
     }
 }
 

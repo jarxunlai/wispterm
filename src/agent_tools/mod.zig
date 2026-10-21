@@ -312,7 +312,7 @@ pub fn executeToolCall(ctx: *ToolContext, call: ToolCall) ![]u8 {
     if (std.mem.eql(u8, call.name, agent_credential.TOOL_NAME)) {
         const args = tool_args.parse(ctx.allocator, call.arguments) orelse return ctx.allocator.dupe(u8, "Invalid tool arguments");
         defer args.deinit();
-        return agent_credential.get(ctx, args.value);
+        return agent_credential.run(ctx, args.value);
     }
     if (std.mem.startsWith(u8, call.name, "memory_") and !ctx.settings.memory_enabled) {
         return ctx.allocator.dupe(u8, "Memory is disabled (ai-memory-enabled = false).");

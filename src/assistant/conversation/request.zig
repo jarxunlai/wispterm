@@ -10,6 +10,7 @@ const ai_chat_protocol = @import("protocol.zig");
 const ai_skill_distill = @import("distill.zig");
 const agent_tools = @import("../../agent_tools/mod.zig");
 const tool_args = @import("../../agent_tools/args.zig");
+const secret_redact = @import("../../credential/redact.zig");
 const tool_output = @import("../../agent_tools/output.zig");
 const first_party_tools = @import("../../tools/first_party.zig");
 const web_search = @import("../../research/web_search.zig");
@@ -354,7 +355,10 @@ fn runAgentRequest(request: *ChatRequest) !ApiResult {
         var mcp_specs_dirty = false;
         for (result.tool_calls.?) |call| {
             if (ai_chat.requestCancelled(request)) return error.Canceled;
-            const progress = try std.fmt.allocPrint(request.allocator, "running {s} {s}", .{ call.name, call.arguments });
+            const progress = try request.session.secret_filter.redactOwned(
+                request.allocator,
+                try std.fmt.allocPrint(request.allocator, "running {s} {s}", .{ call.name, call.arguments }),
+            );
             defer request.allocator.free(progress);
             ai_chat.appendProgressMessage(request.session, progress) catch {};
 
@@ -1023,12 +1027,16 @@ fn toolCancelled(ctx: *anyopaque) bool {
 
 fn toolNote(ctx: *anyopaque, text: []const u8) void {
     const session: *Session = @ptrCast(@alignCast(ctx));
-    session.appendLocalToolMessage(text);
+    const masked = session.secret_filter.redactAlloc(session.allocator, text) catch return;
+    defer session.allocator.free(masked);
+    session.appendLocalToolMessage(masked);
 }
 
 fn toolProgress(ctx: *anyopaque, text: []const u8) void {
     const session: *Session = @ptrCast(@alignCast(ctx));
-    ai_chat.appendProgressMessage(session, text) catch {};
+    const masked = session.secret_filter.redactAlloc(session.allocator, text) catch return;
+    defer session.allocator.free(masked);
+    ai_chat.appendProgressMessage(session, masked) catch {};
 }
 
 fn toolAsk(ctx: *anyopaque, question: []const u8, options: []const ai_chat_types.QuestionOption) ai_chat_types.AskResult {
@@ -1077,6 +1085,7 @@ fn toolContextFromRequest(request: *ChatRequest) ai_chat_types.ToolContext {
         .schedule_continuation = toolScheduleContinuation,
         .write_context_surface_id = request.write_context_surface_id,
         .write_context_surface_id_len = request.write_context_surface_id_len,
+        .secret_filter = &request.session.secret_filter,
         .approve = toolApprove,
         .cancelled = toolCancelled,
         .note = toolNote,
@@ -1085,7 +1094,15 @@ fn toolContextFromRequest(request: *ChatRequest) ai_chat_types.ToolContext {
     };
 }
 
+/// Every tool result reaches the model and the transcript through here, so a
+/// secret `password_input` typed earlier in the conversation is masked even if
+/// a later command echoes it.
 pub fn executeToolCall(request: *ChatRequest, call: ToolCall) ![]u8 {
+    const result = try executeToolCallUnmasked(request, call);
+    return request.session.secret_filter.redactOwned(request.allocator, result);
+}
+
+fn executeToolCallUnmasked(request: *ChatRequest, call: ToolCall) ![]u8 {
     if (first_party_tools.isKnown(call.name) and first_party_tools.isDisabledName(request.disabled_first_party_tools, call.name)) {
         return std.fmt.allocPrint(request.allocator, "Tool is disabled: {s}", .{call.name});
     }
@@ -1529,6 +1546,25 @@ test "subagent tool call requires a task argument" {
     const out = try executeToolCall(env.request, call);
     defer a.free(out);
     try std.testing.expectEqualStrings("Missing task", out);
+}
+
+test "executeToolCall masks a secret typed earlier in the conversation" {
+    const a = std.testing.allocator;
+    const env = try testSessionAndRequest(a);
+    defer env.session.deinit();
+    defer env.request.deinit();
+    // Stand-in for a password_input secret that a later tool output echoes.
+    env.session.secret_filter.remember("Missing task");
+
+    var call = ToolCall{
+        .id = try a.dupe(u8, "c1"),
+        .name = try a.dupe(u8, "subagent"),
+        .arguments = try a.dupe(u8, "{}"),
+    };
+    defer call.deinit(a);
+    const out = try executeToolCall(env.request, call);
+    defer a.free(out);
+    try std.testing.expectEqualStrings(secret_redact.MASK, out);
 }
 
 test "executeToolCall rejects disabled subagent before the wrapper special case" {

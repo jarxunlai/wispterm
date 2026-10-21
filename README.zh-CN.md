@@ -39,7 +39,7 @@
 - **Send to Chat** —— 把终端选中文本（或最近输出）作为折叠上下文卡片发给 Copilot，可走命令面板或可绑定的 `send_to_copilot` 快捷键动作
 - **分叉会话** —— 在任意 rewind 点复制当前 AI 对话（rewind 选择器按 `f`，或从命令面板整体复制），带着共享历史分别尝试不同方案
 - **工作区 Recipe** —— 把当前窗口的标签/分屏布局保存为命名 recipe，从命令面板一键恢复到新窗口，并可导出/导入 recipe JSON 文件分享工作环境
-- **密码库** —— 命令中心 → 密码库，打开类似设置页的页面管理 root/mysql 等密码；密码在本机加密保存（密钥由 macOS 钥匙串 / Windows DPAPI 保管），默认隐藏，显示或复制需手动操作；Agent 通过 `password_get` 读取前每次都需你批准
+- **密码库** —— 命令中心 → 密码库，打开类似设置页的页面管理 root/mysql 等密码；密码在本机加密保存（密钥由 macOS 钥匙串 / Windows DPAPI 保管），默认隐藏，显示或复制需手动操作；Agent 通过 `password_input` 在你每次批准后把密码直接输入终端的密码提示符，Agent 本身看不到密码，工具调用和对话历史里也不会留下密码
 - **AI 历史浏览器** —— 浏览本地、WSL 与 SSH 上的 Codex / Claude Code / Kimi Code / OpenCode 历史，并从原始项目目录恢复会话
 - **Kitty 图形协议** —— 通过 `imgcat.py` / `pdfcat.py` 在远程 shell 中内联显示图片和 PDF
 - **可选的远程访问** —— 通过 Cloudflare 托管的中继分享会话密钥（默认关闭）

@@ -241,13 +241,28 @@ fields on the right (name, username, password, note, agent access).
   `←`/`Esc` back to the list, `Delete` (or `⌫` in the list) then `Enter` removes an entry. Mouse
   clicks and the wheel work too. You can also type an entry name (or `pass`)
   in the Command Center and press Enter on its `Password: <name>` row to copy it.
-- **The agent**: the `password_get` tool reads one entry by name for
-  privileged work (sudo, a DB login, an SSH password). Every reveal shows an
-  approval prompt naming the entry, at every permission level including
-  `full`, and the password is decrypted only after you approve. Turn off
-  **Allow agent** on an entry to refuse it outright. An unknown name returns
-  the available names with their username and note (never a password).
-  Disable the tool in Skill Center if the agent should never see secrets.
+- **The agent**: the `password_input` tool types one entry, by name, into a
+  terminal's password prompt for privileged work (sudo, su, a DB login, an
+  SSH password). The agent never sees the password: it names the entry, the
+  tool call and the chat history show only that name, and WispTerm decrypts
+  the password after you approve, writes it straight to the terminal followed
+  by Enter, and wipes it from memory.
+  - Every use shows an approval prompt naming the entry and the terminal, at
+    every permission level including `full`.
+  - The password is typed only while the terminal's last line is a password
+    prompt (`[sudo] password for …:`, `Password:`, `Enter passphrase …:`,
+    `密码：`, …). This is checked before the approval and again just before
+    typing, so a prompt that timed out meanwhile never turns the password
+    into a shell command.
+  - The screen returned to the agent masks the password as `••••••••`. For
+    the rest of the conversation, any tool output, note, or progress line
+    that contains it is masked the same way. WispTerm remembers only a keyed
+    fingerprint for this, not the password.
+  - Turn off **Allow agent** on an entry to refuse it outright. Calling the
+    tool without a name, or with an unknown name, returns the available names
+    with their username and note (never a password). Disable the tool in
+    Skill Center if the agent should never use stored passwords; turning off
+    the old `password_get` there carries over.
 - **On several computers**: Command Center → **Sync** keeps the store (and
   agent history, SSH hosts, AI profiles) the same everywhere through WebDAV or
   a synced folder, end-to-end encrypted with a sync passphrase. See

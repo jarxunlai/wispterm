@@ -2,7 +2,7 @@
 //! sitting next to the vault in the clear: the login Keychain on macOS, a
 //! DPAPI-sealed file on Windows. Because only WispTerm (not a shell the agent
 //! drives) can unseal it without a prompt, `cat passwords` shows ciphertext and
-//! every agent read has to go through the approved `password_get` path.
+//! every agent use has to go through the approved `password_input` path.
 const std = @import("std");
 const builtin = @import("builtin");
 

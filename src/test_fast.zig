@@ -412,6 +412,7 @@ test {
     _ = @import("agent_tools/credential.zig");
     _ = @import("credential/store.zig");
     _ = @import("credential/page.zig");
+    _ = @import("credential/redact.zig");
     _ = @import("renderer/password_store_renderer.zig");
     _ = @import("sync/crypto.zig");
     _ = @import("sync/merge.zig");
