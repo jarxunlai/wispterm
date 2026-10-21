@@ -8,6 +8,7 @@ const ai_chat_protocol = @import("protocol.zig");
 const ai_agent_access = @import("../../agent/access.zig");
 const terminal_lease = @import("../../agent/terminal_lease.zig");
 const ssh_connection = @import("../../ssh/connection.zig");
+const secret_redact = @import("../../credential/redact.zig");
 pub const SshConnection = ssh_connection.SshConnection;
 
 const DEFAULT_AGENT_TIMEOUT_MS: u32 = 60_000;
@@ -398,6 +399,9 @@ pub const ToolContext = struct {
     schedule_continuation: ?ScheduleContinuationFn = null,
     write_context_surface_id: [64]u8 = undefined,
     write_context_surface_id_len: usize = 0,
+    /// Conversation-owned filter that masks secrets `password_input` typed in
+    /// this conversation out of every later tool result. Null in test contexts.
+    secret_filter: ?*secret_redact.Filter = null,
 
     approve: *const fn (ctx: *anyopaque, tool: []const u8, command: []const u8, reason: []const u8) bool,
     cancelled: *const fn (ctx: *anyopaque) bool,

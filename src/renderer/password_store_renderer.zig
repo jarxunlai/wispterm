@@ -224,7 +224,7 @@ fn rowTitle(row: page.Row) []const u8 {
         .secret => tr("Password", "密码"),
         .reveal => tr("Show password", "显示密码"),
         .note => tr("Note", "备注"),
-        .agent => tr("Allow agent", "允许 Agent 读取"),
+        .agent => tr("Allow agent", "允许 Agent 使用"),
         .copy => tr("Copy password", "复制密码"),
         .delete => tr("Delete entry", "删除条目"),
     };
@@ -237,7 +237,7 @@ fn rowDescription(row: page.Row) []const u8 {
         .secret => tr("Encrypted on disk; type or paste a new one to replace it", "加密保存；输入或粘贴新密码即可替换"),
         .reveal => tr("Show the password in plain text on this page", "在本页以明文显示密码，关闭即隐藏"),
         .note => tr("Tell the agent what it is for, e.g. lab server sudo", "告诉 Agent 用途，例如：实验室服务器 sudo"),
-        .agent => tr("When on, password_get may request it and you approve every read", "开启后 Agent 可通过 password_get 申请读取，每次都需你批准"),
+        .agent => tr("When on, password_input may type it into a password prompt after you approve; the agent never sees it", "开启后 Agent 可通过 password_input 在你批准后把它输入到密码提示符，Agent 看不到密码"),
         .copy => tr("Copy to the clipboard, then paste it into the terminal", "复制到剪贴板，再粘贴到终端"),
         .delete => tr("Remove this entry from the store", "从密码库中移除此条目"),
     };
