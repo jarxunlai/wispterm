@@ -144,8 +144,20 @@ pub fn looksLikePasswordPrompt(line: []const u8) bool {
     if (trimmed.len == 0 or trimmed.len > 200) return false;
     if (!std.mem.endsWith(u8, trimmed, ":") and !std.mem.endsWith(u8, trimmed, "：")) return false;
     const words = [_][]const u8{
-        "password", "passphrase", "pass phrase", "passcode", "passwort", "mot de passe",
-        "contraseña", "senha", "пароль", "密码", "密碼", "口令", "パスワード", "비밀번호",
+        "password",
+        "passphrase",
+        "pass phrase",
+        "passcode",
+        "passwort",
+        "mot de passe",
+        "contraseña",
+        "senha",
+        "пароль",
+        "密码",
+        "密碼",
+        "口令",
+        "パスワード",
+        "비밀번호",
     };
     for (words) |word| {
         if (std.ascii.indexOfIgnoreCase(trimmed, word) != null) return true;
