@@ -1,5 +1,5 @@
 //! Password vault shared by the user (Password Store page, Command Center copy
-//! rows) and the AI agent (`password_get` tool). One file,
+//! rows) and the AI agent (`password_input` tool). One file,
 //! `<config-dir>/passwords`: a JSON array of entries whose `secret` is
 //! XChaCha20-Poly1305 ciphertext (base64 of nonce ‖ ciphertext ‖ tag). The key
 //! is held by the OS (platform/vault_key.zig), never written next to the vault,
@@ -27,7 +27,7 @@ pub const Entry = struct {
     secret: []const u8 = "",
     /// What the secret is for; shown to the agent so it can pick the right one.
     note: []const u8 = "",
-    /// false = `password_get` refuses this entry without even asking.
+    /// false = `password_input` refuses this entry without even asking.
     agent: bool = true,
 };
 

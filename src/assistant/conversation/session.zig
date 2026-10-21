@@ -39,6 +39,7 @@ const prompt_queue = @import("prompt_queue.zig");
 const session_queue = @import("session_queue.zig");
 const table_hscroll = @import("table_hscroll.zig");
 const question_hscroll = @import("question_hscroll.zig");
+const secret_redact = @import("../../credential/redact.zig");
 
 pub const AgentSettings = ai_chat_types.AgentSettings;
 pub const AgentPermission = ai_chat_types.AgentPermission;
@@ -1099,6 +1100,9 @@ pub const Session = struct {
     prompt_queue: PromptQueue = .{},
     queue_open: bool = false,
     queue_selected: usize = 0,
+    /// Fingerprints of secrets `password_input` typed in this conversation;
+    /// every later tool result, note and progress line is masked through it.
+    secret_filter: secret_redact.Filter = .{},
     /// Pan offset for a markdown table that is wider than the message. UI thread.
     table_hscroll: table_hscroll.State = .{},
     created_at_ms: i64 = 0,

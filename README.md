@@ -40,7 +40,7 @@ English | [简体中文](README.zh-CN.md)
 - **Send to Chat** - send the terminal selection (or recent output tail) to Copilot as a collapsible context card, via the command palette or a bindable `send_to_copilot` keybind action
 - **Fork session** - duplicate an AI conversation at any rewind point (rewind picker `f`, or whole-session from the command palette) to explore alternative approaches with shared history
 - **Workspace recipes** - save the current window's tab/split layout as a named recipe, restore it into a new window from the command palette, and export/import recipe JSON files to share setups
-- **Password store** - a Settings-style page (Command Center → Password Store) for root/mysql/... secrets, encrypted on disk with the key in the macOS Keychain / Windows DPAPI; passwords stay hidden until you reveal or copy one, and the agent fetches one with `password_get` only after an explicit approval prompt
+- **Password store** - a Settings-style page (Command Center → Password Store) for root/mysql/... secrets, encrypted on disk with the key in the macOS Keychain / Windows DPAPI; passwords stay hidden until you reveal or copy one, and the agent types one into a terminal password prompt with `password_input` after an explicit approval prompt, without ever seeing it or leaving it in the chat history
 - **AI history browser** - browse local, WSL, and SSH Codex / Claude Code / Kimi Code / OpenCode history and resume sessions from their original project directories
 - **Kitty Graphics protocol** - display inline images and PDFs from remote shells via `imgcat.py` / `pdfcat.py`
 - **Opt-in remote access** - share a session key over a Cloudflare-hosted relay (disabled by default)

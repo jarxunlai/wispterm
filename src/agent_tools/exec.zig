@@ -705,7 +705,7 @@ fn lineReplEvalTool(ctx: *const ToolContext, host: ToolHost, surface: ToolSurfac
 /// `quiet_ms` (after a `min_wait_ms` floor) AND a ready prompt has returned, then
 /// hand back the screen. On timeout, return the latest screen tagged as still in
 /// progress so the model does not treat a partial result as final.
-fn waitForReplPromptReturn(
+pub fn waitForReplPromptReturn(
     ctx: *const ToolContext,
     host: ToolHost,
     surface: ToolSurface,
@@ -760,7 +760,7 @@ fn waitForReplPromptReturn(
 /// The trailing prompt of a terminal snapshot: the last non-empty line, trimmed
 /// of surrounding whitespace. Returns "" when no non-empty line exists. Used to
 /// learn a REPL's prompt dynamically so completion detection is language-agnostic.
-fn extractPromptLine(snapshot: []const u8) []const u8 {
+pub fn extractPromptLine(snapshot: []const u8) []const u8 {
     var it = std.mem.splitBackwardsScalar(u8, snapshot, '\n');
     while (it.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r\n");
