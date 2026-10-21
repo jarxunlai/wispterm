@@ -2681,6 +2681,9 @@ test "tab: snapshotTab persists focused surface title override" {
 
     var surface: Surface = undefined;
     surface.ref_count = 1;
+    surface.launch_kind = .local;
+    surface.agent_detection = .{};
+    surface.agent_session_path_len = 0;
     surface.ssh_connection = null;
     surface.cwd_path_len = 0;
     surface.initial_cwd_path_len = 0;
@@ -2744,6 +2747,8 @@ test "tab: snapshotTab does not use local launch cwd as ssh remote cwd" {
 
     var surface: Surface = undefined;
     surface.ref_count = 1;
+    surface.agent_detection = .{};
+    surface.agent_session_path_len = 0;
     surface.cwd_path_len = 0;
     @memcpy(surface.initial_cwd_path[0..6], "/local");
     surface.initial_cwd_path_len = 6;
@@ -2781,6 +2786,8 @@ test "tab: snapshotTab persists ssh cwd only when remote cwd is known" {
 
     var surface: Surface = undefined;
     surface.ref_count = 1;
+    surface.agent_detection = .{};
+    surface.agent_session_path_len = 0;
     @memcpy(surface.cwd_path[0..4], "/srv");
     surface.cwd_path_len = 4;
     @memcpy(surface.initial_cwd_path[0..6], "/local");
