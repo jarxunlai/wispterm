@@ -193,6 +193,13 @@ AppKit 在 `performKeyEquivalent:` 阶段处理 NSMenu，**早于** `keyDown:` �
 - "type 'echo hello' 测终端" 不会工作 —— IME 把它当成拼音输入
 - 但 NSMenu / 带 Ctrl 修饰键的快捷键不进 IME，所以可以用它们做端到端测试
 
+**听写 / 语音输入法依赖 `-selectedRange`**（issue #671）：macOS 系统听写和豆包等语音输入法
+启动前会先问 NSTextInputClient 的 `-selectedRange`，返回 `{NSNotFound, 0}`（"没有插入点"）
+时直接拒绝启动，什么都写不进来。没有组字时必须返回空光标 `{0, 0}`（Ghostty、kitty 都这样做）。
+这类输入也不经过 `keyDown:`：中间结果通过 `setMarkedText:` 流式到达，最终结果通过
+`insertText:` 提交，都来自 run loop source 而不是 NSEvent，所以 bridge 要自己唤醒主循环，
+preedit 变化也要自己请求重绘。
+
 ### 4. macOS 26 (Sequoia 后续) 上 `System Events` 的 frontmost 查询时不时挂
 
 ```
