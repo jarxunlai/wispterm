@@ -103,6 +103,9 @@ tested passes.
   same-user process can decrypt it. macOS (Keychain) and Windows (DPAPI) keep
   the key out of the config directory.
 - Off-screen window guards are incomplete.
+- Sync cannot create WebDAV folders (`MKCOL` is not available in the std HTTP
+  client used on Linux): create the remote folder on the drive by hand before
+  the first sync. Synced-folder sync is unaffected.
 
 ## Cross-Platform
 
@@ -111,3 +114,8 @@ tested passes.
   they have native shader support or a translation layer.
 - Some renderer coordination still uses documented OpenGL-shaped compatibility
   plumbing. It is guarded and shrinking, but not fully backend-neutral yet.
+- Sync resolves conflicting edits by each computer's clock (newest wins), so a
+  computer with a badly wrong clock can win or lose a conflict it should not.
+- Sync updates an Agent conversation that is open in a tab only in the history
+  store; the open tab keeps its own copy and saves it again on its next message
+  (so the tab's version wins). Reopen the conversation to see the synced one.

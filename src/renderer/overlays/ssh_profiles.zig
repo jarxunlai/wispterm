@@ -25,6 +25,11 @@ pub const State = struct {
     profiles: [SSH_PROFILE_MAX]SshProfile = undefined,
     profile_count: usize = 0,
     profiles_loaded: bool = false,
+    /// Hashes of every profile name this cache has seen (loaded or saved), so
+    /// a save keeps profiles added on disk meanwhile (by a sync or another
+    /// window) but not ones deleted here.
+    known_names: [SSH_PROFILE_MAX * 2]u64 = undefined,
+    known_count: usize = 0,
     list_selected: usize = 0,
     list_mode: SshListMode = .manage,
     list_filter_buf: [SSH_FIELD_MAX]u8 = undefined,
@@ -42,6 +47,21 @@ pub const State = struct {
         const len = @min(value.len, SSH_FIELD_MAX);
         @memcpy(self.bufs[idx][0..len], value[0..len]);
         self.lens[idx] = len;
+    }
+
+    pub fn knownNames(self: *const State) []const u64 {
+        return self.known_names[0..self.known_count];
+    }
+
+    /// Record the names now in `profiles` (after a load or a save).
+    pub fn rememberProfileNames(self: *State) void {
+        for (self.profiles[0..self.profile_count]) |*profile| {
+            const h = profile_codec.profileNameHash(profile_codec.profileField(profile, .name));
+            if (std.mem.indexOfScalar(u64, self.knownNames(), h) != null) continue;
+            if (self.known_count == self.known_names.len) return;
+            self.known_names[self.known_count] = h;
+            self.known_count += 1;
+        }
     }
 
     pub fn resetForm(self: *State) void {

@@ -414,6 +414,16 @@ test {
     _ = @import("credential/page.zig");
     _ = @import("credential/redact.zig");
     _ = @import("renderer/password_store_renderer.zig");
+    _ = @import("sync/crypto.zig");
+    _ = @import("sync/merge.zig");
+    _ = @import("sync/transport.zig");
+    _ = @import("sync/settings.zig");
+    _ = @import("sync/kinds.zig");
+    _ = @import("sync/wiping_allocator.zig");
+    _ = @import("sync/engine.zig");
+    _ = @import("sync/service.zig");
+    _ = @import("sync/page.zig");
+    _ = @import("renderer/sync_page_renderer.zig");
     _ = @import("agent_tools/memory_search.zig");
     _ = @import("agent_tools/output.zig");
     _ = @import("agent_tools/schedule.zig");

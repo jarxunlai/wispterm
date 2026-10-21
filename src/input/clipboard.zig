@@ -668,6 +668,17 @@ pub fn pasteClipboardIntoPasswordStore() bool {
     return AppWindow.passwordStorePaste(text);
 }
 
+pub fn pasteClipboardIntoSyncPage() bool {
+    const allocator = AppWindow.g_allocator orelse return false;
+    const text = readClipboardText(allocator) orelse return false;
+    defer {
+        // Often the WebDAV app password or the sync passphrase.
+        std.crypto.secureZero(u8, text);
+        allocator.free(text);
+    }
+    return AppWindow.syncPagePaste(text);
+}
+
 pub fn pasteFromClipboardIntoAiChat(chat: *AppWindow.ai_chat.Session) void {
     const allocator = AppWindow.g_allocator orelse return;
     const text = readClipboardText(allocator) orelse return;

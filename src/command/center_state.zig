@@ -65,6 +65,8 @@ pub const CommandAction = enum {
     import_recipe,
     export_recipe,
     open_password_store,
+    open_sync,
+    sync_now,
 };
 
 pub const CommandEntry = struct {
@@ -136,6 +138,8 @@ pub const command_entries = [_]CommandEntry{
     .{ .title = "Import Recipe", .detail = "Import a shared recipe JSON file into your recipes", .shortcut = "", .action = .import_recipe },
     .{ .title = "Export Recipe", .detail = "Save this window's layout as a shareable recipe JSON file", .shortcut = "", .action = .export_recipe },
     .{ .title = "Password Store", .detail = "Manage encrypted passwords; type a name here and press Enter to copy it", .shortcut = "", .action = .open_password_store },
+    .{ .title = "Sync", .detail = "End-to-end encrypted sync of passwords, agent history, SSH hosts and AI profiles via WebDAV or a synced folder", .shortcut = "", .action = .open_sync },
+    .{ .title = "Sync Now", .detail = "Sync passwords, agent history, SSH hosts and AI profiles with your drive now", .shortcut = "", .action = .sync_now },
 };
 
 test "command center exposes generic integration prompt action only" {
@@ -476,6 +480,8 @@ test "command center includes quick configure AI" {
 
 test "command center includes Password Store action" {
     try expectCommandEntry("Password Store", .open_password_store);
+    try expectCommandEntry("Sync", .open_sync);
+    try expectCommandEntry("Sync Now", .sync_now);
 }
 
 test "command center includes prompt queue actions" {

@@ -58,6 +58,7 @@ const recipe_form_state = @import("../recipe/form_state.zig");
 const recipe_store = @import("../recipe/store.zig");
 const recipe_ui = @import("../recipe/ui_state.zig");
 const credential_store = @import("../credential/store.zig");
+const sync_service = @import("../sync/service.zig");
 const quick_verify = @import("../assistant/quick_verify.zig");
 const oauth_codec = @import("../assistant/oauth/codec.zig");
 const oauth_login = @import("../assistant/oauth/login.zig");
@@ -997,6 +998,8 @@ fn executeCommand(action: CommandAction) void {
         .save_workspace_recipe => openRecipeForm(),
         .open_recipe => showStatusToast(i18n.s().toast_recipe_open_hint),
         .open_password_store => _ = AppWindow.openPasswordStoreTab(),
+        .open_sync => _ = AppWindow.openSyncTab(),
+        .sync_now => syncNowFromCommand(),
         .import_recipe => {
             if (AppWindow.g_allocator) |alloc| AppWindow.importWorkspaceRecipeFromFile(alloc);
         },
@@ -1531,6 +1534,17 @@ fn executePaletteItem(item: PaletteItem) void {
         .ai_profile => |profile_idx| _ = spawnAiProfileWithAgentOverride(profile_idx, null),
         .theme => |ti| applyEmbeddedThemeFromPalette(ti),
     }
+}
+
+fn syncNowFromCommand() void {
+    const alloc = AppWindow.g_allocator orelse return;
+    if (!sync_service.isSetUp(alloc)) {
+        _ = AppWindow.openSyncTab();
+        showStatusToast(i18n.s().toast_sync_setup_first);
+        return;
+    }
+    sync_service.requestSync(true);
+    showStatusToast(i18n.s().toast_sync_started);
 }
 
 fn copyPasswordFromPalette(pw_idx: usize) void {
@@ -5747,10 +5761,14 @@ fn loadAiProfiles() void {
     assistantProfiles().profiles_loaded = true;
     const allocator = AppWindow.g_allocator orelse return;
     assistantProfiles().profile_count = assistant_profile_store.loadProfiles(allocator, assistantProfiles().profiles[0..]);
+    assistantProfiles().known_count = 0;
+    assistantProfiles().rememberProfileNames();
 }
 
 fn saveAiProfiles(allocator: std.mem.Allocator) void {
-    if (!assistant_profile_store.saveProfiles(allocator, assistantProfiles().profiles[0..assistantProfiles().profile_count])) showStatusToast("Failed to save AI profiles");
+    const st = assistantProfiles();
+    if (!assistant_profile_store.saveProfilesKeepingNew(allocator, st.profiles[0..st.profile_count], st.knownNames())) showStatusToast("Failed to save AI profiles");
+    st.rememberProfileNames();
 }
 
 fn loadSshProfiles() void {
@@ -5758,6 +5776,19 @@ fn loadSshProfiles() void {
     sshState().profiles_loaded = true;
     const allocator = AppWindow.g_allocator orelse return;
     sshState().profile_count = ssh_profile_store.loadProfiles(allocator, sshState().profiles[0..]);
+    sshState().known_count = 0;
+    sshState().rememberProfileNames();
+}
+
+/// Sync rewrote ssh_hosts / ai_profiles: drop this window's cached list so the
+/// next use reloads it. Deferred (false) while a list or form that indexes
+/// into the cache is open; the caller retries.
+pub fn reloadProfileCachesAfterSync(ssh: bool, ai: bool) bool {
+    if (ssh and (g_ssh_list_visible or g_ssh_form_visible)) return false;
+    if (ai and (g_ai_list_visible or g_ai_form_visible)) return false;
+    if (ssh) sshState().profiles_loaded = false;
+    if (ai) assistantProfiles().profiles_loaded = false;
+    return true;
 }
 
 fn saveSshProfiles(allocator: std.mem.Allocator) void {
@@ -5765,7 +5796,9 @@ fn saveSshProfiles(allocator: std.mem.Allocator) void {
 }
 
 fn saveSshProfilesChecked(allocator: std.mem.Allocator) bool {
-    return ssh_profile_store.saveProfiles(allocator, sshState().profiles[0..sshState().profile_count]);
+    const st = sshState();
+    defer st.rememberProfileNames();
+    return ssh_profile_store.saveProfilesKeepingNew(allocator, st.profiles[0..st.profile_count], st.knownNames());
 }
 
 fn loadOpenSshConfigDefault() void {

@@ -263,6 +263,10 @@ fields on the right (name, username, password, note, agent access).
     with their username and note (never a password). Disable the tool in
     Skill Center if the agent should never use stored passwords; turning off
     the old `password_get` there carries over.
+- **On several computers**: Command Center → **Sync** keeps the store (and
+  agent history, SSH hosts, AI profiles) the same everywhere through WebDAV or
+  a synced folder, end-to-end encrypted with a sync passphrase. See
+  [Sync](sync.md).
 
 ## Markdown in replies
 

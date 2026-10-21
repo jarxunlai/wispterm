@@ -24,6 +24,10 @@ const impl = switch (backendForOs(builtin.os.tag)) {
 pub const Method = enum {
     GET,
     POST,
+    /// WebDAV sync (sync/transport.zig) uploads, removes, and creates folders.
+    PUT,
+    DELETE,
+    MKCOL,
 };
 
 pub const Header = std.http.Header;
@@ -61,6 +65,9 @@ pub fn methodName(method: Method) []const u8 {
     return switch (method) {
         .GET => "GET",
         .POST => "POST",
+        .PUT => "PUT",
+        .DELETE => "DELETE",
+        .MKCOL => "MKCOL",
     };
 }
 
@@ -104,6 +111,10 @@ fn fetchDirect(allocator: std.mem.Allocator, request: Request) !Response {
     const method: std.http.Method = switch (request.method) {
         .GET => .GET,
         .POST => .POST,
+        .PUT => .PUT,
+        .DELETE => .DELETE,
+        // std.http has no extension methods; the proxy path writes the verb raw.
+        .MKCOL => return error.UnsupportedHttpMethod,
     };
     var client: std.http.Client = .{
         .allocator = allocator,
@@ -115,7 +126,8 @@ fn fetchDirect(allocator: std.mem.Allocator, request: Request) !Response {
     const response = try client.fetch(.{
         .location = .{ .url = request.url },
         .method = method,
-        .payload = request.body,
+        // std.http rejects a body on DELETE; GET/POST keep their old behavior.
+        .payload = if (request.method == .DELETE) null else request.body,
         .headers = .{},
         .extra_headers = request.headers,
         .keep_alive = false,

@@ -37,6 +37,8 @@ pub const State = struct {
     shown: ?[]u8 = null,
     confirm_delete: bool = false,
     status: Status = .none,
+    /// The vault file as this page last read or wrote it.
+    disk: store.Fingerprint = @splat(0),
 
     /// (Re)load the vault from disk, discarding page state.
     pub fn open(self: *State, allocator: std.mem.Allocator) void {
@@ -46,6 +48,32 @@ pub const State = struct {
             self.status = .load_failed;
             break :blk null;
         };
+        self.disk = store.fileFingerprint(allocator);
+    }
+
+    /// Reload when the file changed underneath (sync, another window), so the
+    /// next save never writes back a stale copy. The selection and an open
+    /// edit follow their entry by name. Called before every mutation.
+    pub fn refreshIfChanged(self: *State) void {
+        const allocator = self.allocator orelse return;
+        if (self.vault == null) return;
+        const now = store.fileFingerprint(allocator);
+        if (std.mem.eql(u8, &now, &self.disk)) return;
+        const fresh = store.load(allocator) catch return;
+        var name_buf: [512]u8 = undefined;
+        var name_len: ?usize = null;
+        if (self.current()) |e| {
+            const n = @min(e.name.len, name_buf.len);
+            @memcpy(name_buf[0..n], e.name[0..n]);
+            name_len = n;
+        }
+        self.hideSecret();
+        self.vault.?.deinit();
+        self.vault = fresh;
+        self.disk = now;
+        const count = self.entries().len;
+        self.selected = if (name_len) |n| (self.vault.?.find(name_buf[0..n], null) orelse count) else count;
+        if (self.current() == null and self.editing) self.endEdit();
     }
 
     pub fn close(self: *State) void {
@@ -226,6 +254,7 @@ pub const State = struct {
     }
 
     fn activate(self: *State, row: Row) ?Action {
+        self.refreshIfChanged();
         if (self.current() == null) {
             self.createEntry();
             return null;
@@ -234,7 +263,7 @@ pub const State = struct {
             .name, .username, .secret, .note => self.beginEdit(row),
             .reveal => if (self.shown != null) self.hideSecret() else self.showSecret(),
             .agent => {
-                const entry = self.currentMut().?;
+                const entry = self.currentMut() orelse return null;
                 entry.agent = !entry.agent;
                 self.persist();
             },
@@ -270,6 +299,7 @@ pub const State = struct {
     }
 
     fn createEntry(self: *State) void {
+        self.refreshIfChanged();
         const vault = if (self.vault) |*v| v else return;
         var name_buf: [32]u8 = undefined;
         var n: usize = 1;
@@ -290,6 +320,7 @@ pub const State = struct {
 
     fn deleteCurrent(self: *State) void {
         self.confirm_delete = false;
+        self.refreshIfChanged();
         if (self.current() == null) return;
         self.hideSecret();
         _ = self.vault.?.entries.orderedRemove(self.selected);
@@ -320,6 +351,7 @@ pub const State = struct {
 
     /// Store the draft into the edited field and save. False keeps editing.
     fn commitEdit(self: *State) bool {
+        self.refreshIfChanged();
         const vault = if (self.vault) |*v| v else {
             self.endEdit();
             return false;
@@ -364,6 +396,7 @@ pub const State = struct {
             self.status = .save_failed;
             return;
         };
+        self.disk = store.fileFingerprint(allocator);
         self.status = .saved;
     }
 
