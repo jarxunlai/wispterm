@@ -248,6 +248,10 @@ fields on the right (name, username, password, note, agent access).
   **Allow agent** on an entry to refuse it outright. An unknown name returns
   the available names with their username and note (never a password).
   Disable the tool in Skill Center if the agent should never see secrets.
+- **On several computers**: Command Center → **Sync** keeps the store (and
+  agent history, SSH hosts, AI profiles) the same everywhere through WebDAV or
+  a synced folder, end-to-end encrypted with a sync passphrase. See
+  [Sync](sync.md).
 
 ## Markdown in replies
 

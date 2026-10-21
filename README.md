@@ -41,6 +41,7 @@ English | [简体中文](README.zh-CN.md)
 - **Fork session** - duplicate an AI conversation at any rewind point (rewind picker `f`, or whole-session from the command palette) to explore alternative approaches with shared history
 - **Workspace recipes** - save the current window's tab/split layout as a named recipe, restore it into a new window from the command palette, and export/import recipe JSON files to share setups
 - **Password store** - a Settings-style page (Command Center → Password Store) for root/mysql/... secrets, encrypted on disk with the key in the macOS Keychain / Windows DPAPI; passwords stay hidden until you reveal or copy one, and the agent fetches one with `password_get` only after an explicit approval prompt
+- **Encrypted sync** - keep the Password Store, Agent history, SSH hosts and AI profiles in sync across computers through WebDAV (坚果云, Nextcloud, Synology, …) or a synced folder (OneDrive, iCloud Drive, Dropbox), end-to-end encrypted with a sync passphrase and merged item by item; see [Sync](docs/sync.md)
 - **AI history browser** - browse local, WSL, and SSH Codex / Claude Code / Kimi Code / OpenCode history and resume sessions from their original project directories
 - **Kitty Graphics protocol** - display inline images and PDFs from remote shells via `imgcat.py` / `pdfcat.py`
 - **Opt-in remote access** - share a session key over a Cloudflare-hosted relay (disabled by default)

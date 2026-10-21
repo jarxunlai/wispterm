@@ -5,7 +5,7 @@ const platform_dirs = @import("../platform/dirs.zig");
 const platform_atomic_file = @import("../platform/atomic_file.zig");
 const command_palette_model = @import("../command/palette_model.zig");
 
-const SSH_PROFILES_HEADER = "# WispTerm SSH profiles. Fields are hex encoded: name, host, user, password, port, proxy_jump, auth_method, identity_file.\n";
+pub const SSH_PROFILES_HEADER = "# WispTerm SSH profiles. Fields are hex encoded: name, host, user, password, port, proxy_jump, auth_method, identity_file.\n";
 
 pub fn profilesPath(allocator: std.mem.Allocator) ![]const u8 {
     return platform_dirs.sshHostsPath(allocator);
@@ -34,6 +34,13 @@ pub fn loadProfilesFromContent(content: []const u8, out: []profile_codec.SshProf
 }
 
 pub fn saveProfiles(allocator: std.mem.Allocator, profiles: []const profile_codec.SshProfile) bool {
+    return saveProfilesKeepingNew(allocator, profiles, null);
+}
+
+/// Save a cached list without dropping profiles that appeared on disk since it
+/// was loaded (a sync or another window wrote them). `known` = hashes of every
+/// name the cache has seen (`profile_codec.profileNameHash`); null overwrites.
+pub fn saveProfilesKeepingNew(allocator: std.mem.Allocator, profiles: []const profile_codec.SshProfile, known: ?[]const u64) bool {
     const path = profilesPath(allocator) catch return false;
     defer allocator.free(path);
     if (std.fs.path.dirname(path)) |dir| {
@@ -45,6 +52,17 @@ pub fn saveProfiles(allocator: std.mem.Allocator, profiles: []const profile_code
     out.appendSlice(allocator, SSH_PROFILES_HEADER) catch return false;
     for (profiles) |*profile| {
         appendProfileLine(allocator, &out, profile) catch return false;
+    }
+    if (known) |seen| {
+        const disk = std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024) catch |err| switch (err) {
+            error.FileNotFound => @as([]u8, &.{}),
+            else => return false,
+        };
+        defer allocator.free(disk);
+        const names = allocator.alloc([]const u8, profiles.len) catch return false;
+        defer allocator.free(names);
+        for (profiles, names) |*profile, *name| name.* = profile_codec.profileField(profile, .name);
+        profile_codec.appendNewDiskLines(allocator, &out, disk, names, seen) catch return false;
     }
     platform_atomic_file.writeFileReplaceSafe(path, out.items) catch return false;
     return true;

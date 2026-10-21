@@ -111,6 +111,48 @@ pub fn decodeHexField(value: []const u8, out: *[SSH_FIELD_MAX]u8) ?usize {
     return decodeHexFieldToSlice(value, out[0..]);
 }
 
+/// Identity of a profile name in a cached list's "already seen" set.
+pub fn profileNameHash(name: []const u8) u64 {
+    return std.hash.Wyhash.hash(0x5157_7e4d, name);
+}
+
+/// Append the profile lines of `disk` that appeared after a cached list was
+/// loaded: their name is neither in `current` (being saved) nor in `known`
+/// (seen by the cache, so a missing one was deleted here). A sync or another
+/// window added them; a save from the stale cache must not drop them.
+pub fn appendNewDiskLines(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(u8),
+    disk: []const u8,
+    current: []const []const u8,
+    known: []const u64,
+) !void {
+    var lines = std.mem.splitScalar(u8, disk, '\n');
+    next_line: while (lines.next()) |raw| {
+        const line = std.mem.trimRight(u8, raw, "\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        var name_buf: [SSH_FIELD_MAX]u8 = undefined;
+        const name_hex = line[0 .. std.mem.indexOfScalar(u8, line, '\t') orelse line.len];
+        const name_len = decodeHexFieldToSlice(name_hex, &name_buf) orelse continue;
+        const name = name_buf[0..name_len];
+        for (current) |c| if (std.mem.eql(u8, c, name)) continue :next_line;
+        if (std.mem.indexOfScalar(u64, known, profileNameHash(name)) != null) continue;
+        try out.appendSlice(allocator, line);
+        try out.append(allocator, '\n');
+    }
+}
+
+test "profile codec keeps only profiles that appeared on disk after the cache loaded" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(allocator);
+    // "box" (being saved), "old" (seen, deleted here), "new" (added elsewhere).
+    const disk = "# header\n626F78\t31\n6F6C64\t32\n6E6577\t33\n";
+    const known = [_]u64{ profileNameHash("box"), profileNameHash("old") };
+    try appendNewDiskLines(allocator, &out, disk, &.{"box"}, &known);
+    try std.testing.expectEqualStrings("6E6577\t33\n", out.items);
+}
+
 /// Decode one tab-separated, hex-encoded SSH profile line into an `SshProfile`.
 /// Returns null only when a present field contains malformed hex; trailing
 /// fields absent from the line are left empty so profiles written by older

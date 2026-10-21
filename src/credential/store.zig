@@ -175,7 +175,7 @@ fn parseLegacyLine(line_raw: []const u8) ?LegacyLine {
 }
 
 /// Seal every plaintext secret of a legacy vault in place.
-fn sealLegacy(vault: *Vault) !void {
+pub fn sealLegacy(vault: *Vault) !void {
     for (vault.entries.items) |*entry| entry.secret = try vault.seal(entry.secret);
     vault.legacy_plaintext = false;
 }
@@ -210,6 +210,21 @@ pub fn load(allocator: std.mem.Allocator) !Vault {
         try save(allocator, vault.entries.items);
     }
     return vault;
+}
+
+pub const Fingerprint = [std.crypto.hash.sha2.Sha256.digest_length]u8;
+
+/// Hash of the vault file as it is on disk now (all zero when missing), so a
+/// holder of a loaded copy can tell that a sync or another window rewrote it.
+pub fn fileFingerprint(allocator: std.mem.Allocator) Fingerprint {
+    var out: Fingerprint = @splat(0);
+    if (builtin.is_test) return out;
+    const p = path(allocator) catch return out;
+    defer allocator.free(p);
+    const content = std.fs.cwd().readFileAlloc(allocator, p, MAX_BYTES) catch return out;
+    defer allocator.free(content);
+    std.crypto.hash.sha2.Sha256.hash(content, &out, .{});
+    return out;
 }
 
 pub fn save(allocator: std.mem.Allocator, entries: []const Entry) !void {

@@ -91,6 +91,7 @@ const pasteClipboardIntoBrowserUrlBar = clipboard.pasteClipboardIntoBrowserUrlBa
 const pasteClipboardIntoSessionLauncher = clipboard.pasteClipboardIntoSessionLauncher;
 const pasteClipboardIntoMcpForm = clipboard.pasteClipboardIntoMcpForm;
 const pasteClipboardIntoPasswordStore = clipboard.pasteClipboardIntoPasswordStore;
+const pasteClipboardIntoSyncPage = clipboard.pasteClipboardIntoSyncPage;
 const pasteFromClipboardIntoAiChat = clipboard.pasteFromClipboardIntoAiChat;
 const pasteImageIntoAiChat = clipboard.pasteImageIntoAiChat;
 pub const pasteImageFromClipboard = clipboard.pasteImageFromClipboard;
@@ -623,6 +624,45 @@ test "input: password store page keys and typing request a repaint" {
     const typed = dispatchChar(.{ .codepoint = 'k' });
     try std.testing.expect(typed.needs_rebuild and typed.cells_invalid);
     try std.testing.expectEqualStrings("k", page.draftText());
+}
+
+test "input: sync page keys and typing request a repaint" {
+    try skipUnlessInputRendererShard();
+    const previous_keybinds = AppWindow.g_keybinds;
+    const previous_tabs = tab.g_tabs;
+    const previous_count = tab.g_tab_count;
+    const previous_active = active_tab_state.g_active_tab;
+    var page_tab = tab.TabState{ .kind = .sync, .tree = .empty };
+    defer {
+        AppWindow.g_keybinds = previous_keybinds;
+        tab.g_tabs = previous_tabs;
+        tab.g_tab_count = previous_count;
+        active_tab_state.g_active_tab = previous_active;
+    }
+
+    AppWindow.g_keybinds = keybind.Set.defaults();
+    tab.g_tabs = .{null} ** tab.MAX_TABS;
+    tab.g_tabs[0] = &page_tab;
+    tab.g_tab_count = 1;
+    active_tab_state.g_active_tab = 0;
+    const page = AppWindow.activeSyncPage() orelse return error.ExpectedSyncPage;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(dir);
+    page.open(std.testing.allocator, dir); // never the real sync settings
+    defer page.close();
+
+    const nav = dispatchKey(arrow_down_event);
+    try std.testing.expect(nav.consumed and nav.needs_rebuild and nav.cells_invalid);
+    try std.testing.expectEqual(.data, page.section);
+
+    page.section = .connection;
+    page.focus = .detail;
+    page.row_index = 1; // WebDAV URL
+    const typed = dispatchChar(.{ .codepoint = 'h' });
+    try std.testing.expect(typed.needs_rebuild and typed.cells_invalid);
+    try std.testing.expectEqualStrings("h", page.draftText());
 }
 
 test "input: port forwarding arrow navigation requests a repaint" {
@@ -2947,6 +2987,10 @@ fn dispatchChar(ev: platform_input.CharEvent) ui_effect.UiEffect {
         if (!ev.super and ev.ctrl == ev.alt and password_page.insertChar(ev.codepoint)) return input_effects.repaint();
         return .none;
     }
+    if (AppWindow.activeSyncPage()) |sync_page| {
+        if (!ev.super and ev.ctrl == ev.alt and sync_page.insertChar(ev.codepoint)) return input_effects.repaint();
+        return .none;
+    }
     if (AppWindow.activePortForwarding() != null) {
         if (command_char_suppressors.port_forwarding) |codepoint| {
             const suppress = !ev.ctrl and !ev.alt and !ev.super and ev.codepoint == codepoint;
@@ -3494,6 +3538,14 @@ fn dispatchKey(ev: platform_input.KeyEvent) ui_effect.UiEffect {
             if (handleConfiguredKeybindAction(app_action, .late)) return .none;
         }
         return AppWindow.passwordStoreHandleKey(key_event);
+    }
+    // Sync page: same placement and rules as the Password Store page.
+    if (AppWindow.activeSyncPage() != null) {
+        if (actionIs(action, .paste)) return if (pasteClipboardIntoSyncPage()) input_effects.repaint() else .none;
+        if (action) |app_action| {
+            if (handleConfiguredKeybindAction(app_action, .late)) return .none;
+        }
+        return AppWindow.syncPageHandleKey(key_event);
     }
     if (assistant_conversation.current(aiCopilotFocused())) |target| {
         // Accept Cmd (super, macOS) or Ctrl (Windows) for chat editing keys.
@@ -6122,6 +6174,10 @@ fn handleMouseButton(ev: platform_input.MouseButtonEvent) void {
                 if (AppWindow.passwordStoreHandleMousePress(xpos, ypos)) return;
             }
 
+            if (AppWindow.activeSyncPage() != null) {
+                if (AppWindow.syncPageHandleMousePress(xpos, ypos)) return;
+            }
+
             if (AppWindow.activeConversationCenter() != null) {
                 if (AppWindow.conversationCenterHandleMousePress(xpos, ypos)) return;
             }
@@ -7426,6 +7482,10 @@ fn handleMouseWheel(ev: platform_input.MouseWheelEvent) void {
     }
     if (AppWindow.activePasswordStore() != null) {
         AppWindow.passwordStoreHandleMouseWheel(ev.xpos, @intCast(ev.delta));
+        return;
+    }
+    if (AppWindow.activeSyncPage() != null) {
+        AppWindow.syncPageHandleMouseWheel(ev.xpos, @intCast(ev.delta));
         return;
     }
     if (AppWindow.activeConversationCenter() != null) {

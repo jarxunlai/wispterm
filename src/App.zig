@@ -22,6 +22,7 @@ const platform_notifications = @import("platform/notifications.zig");
 const platform_thread_control = @import("platform/thread_control.zig");
 const window_backend = @import("platform/window_backend.zig");
 const remote = @import("remote_client.zig");
+const sync_service = @import("sync/service.zig");
 const weixin = @import("weixin/controller.zig");
 const weixin_types = @import("weixin/types.zig");
 const feishu = @import("feishu/controller.zig");
@@ -1223,6 +1224,8 @@ pub fn deinit(self: *App) void {
     self.joinUpdateThread();
     self.joinDownloadThread();
     memory_digest_scheduler.deinit();
+    // Joins the sync worker (it waits for an in-flight request to finish).
+    sync_service.stop();
 
     if (self.remote_client) |client| {
         client.destroy();

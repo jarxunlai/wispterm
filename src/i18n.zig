@@ -60,6 +60,7 @@ pub const Strings = struct {
     // —— 记忆中心工作台 ——
     memory_center_title: []const u8,
     password_store_title: []const u8,
+    sync_title: []const u8,
     memory_center_source: []const u8,
     memory_center_detail: []const u8,
     memory_source_remembered: []const u8,
@@ -338,6 +339,8 @@ pub const Strings = struct {
     toast_recipe_ai_failed: []const u8,
     toast_recipe_open_hint: []const u8,
     toast_password_copied: []const u8,
+    toast_sync_started: []const u8,
+    toast_sync_setup_first: []const u8,
     toast_ssh_latency_requires_ssh: []const u8,
     toast_ssh_latency_jump_unsupported: []const u8,
     ssh_latency_on: []const u8,
@@ -391,6 +394,7 @@ const en = Strings{
 
     .memory_center_title = "Memory Center",
     .password_store_title = "Password Store",
+    .sync_title = "Sync",
     .memory_center_source = "SOURCE",
     .memory_center_detail = "Memory Detail",
     .memory_source_remembered = "AI Remembered",
@@ -657,6 +661,8 @@ const en = Strings{
     .toast_recipe_ai_failed = "Some AI tabs could not be restored",
     .toast_recipe_open_hint = "Type a recipe name in the Command Palette and press Enter",
     .toast_password_copied = "Password copied: ",
+    .toast_sync_started = "Syncing with your drive…",
+    .toast_sync_setup_first = "Set up sync first: enter the drive and the sync passphrase",
     .toast_ssh_latency_requires_ssh = "Open a WispTerm SSH session first",
     .toast_ssh_latency_jump_unsupported = "Ping cannot measure an SSH route through a jump host",
     .ssh_latency_on = "On",
@@ -710,6 +716,7 @@ const zh_CN = Strings{
 
     .memory_center_title = "记忆中心",
     .password_store_title = "密码库",
+    .sync_title = "同步",
     .memory_center_source = "来源",
     .memory_center_detail = "记忆详情",
     .memory_source_remembered = "AI 记忆",
@@ -976,6 +983,8 @@ const zh_CN = Strings{
     .toast_recipe_ai_failed = "部分 AI 标签页无法恢复",
     .toast_recipe_open_hint = "在命令面板输入 Recipe 名称并回车即可打开",
     .toast_password_copied = "已复制密码：",
+    .toast_sync_started = "正在与网盘同步…",
+    .toast_sync_setup_first = "请先设置同步：填写网盘信息和同步口令",
     .toast_ssh_latency_requires_ssh = "请先打开一个 WispTerm SSH 会话",
     .toast_ssh_latency_jump_unsupported = "Ping 暂不支持测量经过跳板机的 SSH 路径",
     .ssh_latency_on = "已开启",
@@ -1149,6 +1158,8 @@ pub fn commandTitle(action: CommandAction) ?[]const u8 {
         .import_recipe => "导入 Recipe",
         .export_recipe => "导出 Recipe",
         .open_password_store => "密码库",
+        .open_sync => "同步",
+        .sync_now => "立即同步",
     };
 }
 
@@ -1219,6 +1230,8 @@ pub fn commandDetail(action: CommandAction) ?[]const u8 {
         .import_recipe => "把分享来的 Recipe JSON 文件导入到你的 Recipe 列表",
         .export_recipe => "把当前窗口的布局导出成可分享的 Recipe JSON 文件",
         .open_password_store => "管理加密保存的密码；在这里输入名称并回车即可复制",
+        .open_sync => "通过 WebDAV 或同步文件夹，在多台电脑之间端到端加密同步密码库、Agent 历史、SSH 主机和 AI 配置",
+        .sync_now => "立即与网盘同步密码库、Agent 历史、SSH 主机和 AI 配置",
     };
 }
 

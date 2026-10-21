@@ -149,6 +149,8 @@ const port_forwarding_renderer = @import("renderer/port_forwarding_renderer.zig"
 const password_store_renderer = @import("renderer/password_store_renderer.zig");
 const password_store_page = @import("credential/page.zig");
 const password_store = @import("credential/store.zig");
+const sync_bridge = @import("appwindow/sync_bridge.zig");
+const sync_page = @import("sync/page.zig");
 const input_key = @import("input/key.zig");
 const ai_sidebar = @import("assistant/sidebar/panel.zig");
 pub const ui_perf = @import("ui_perf.zig");
@@ -250,6 +252,7 @@ pub fn init(allocator: std.mem.Allocator, app: *App) !AppWindow {
     app.maybeStartStartupUpdateCheck();
 
     try ensureGlobalAgentHistoryStore(allocator);
+    sync_bridge.startService(allocator, .{ .store = &g_agent_history, .mutex = &g_agent_history_mutex, .mark_dirty = markAgentHistoryDirtyLocked });
     tab.g_ai_history_change_hook = saveAiHistoryChangeEvent;
     installSessionRestoreHooks();
     // Init the scheduler store once per process (guard prevents re-init on
@@ -2307,6 +2310,24 @@ fn renderPasswordStoreFrame(fb_width: c_int, fb_height: c_int, titlebar_offset: 
         .renderTextLimited = titlebar.renderTextLimited,
         .glyphAdvance = titlebar.titlebarGlyphAdvance,
     }, state, geo, @floatFromInt(fb_height));
+}
+
+fn renderSyncFrame(fb_width: c_int, fb_height: c_int, titlebar_offset: f32) void {
+    gpu.state.setViewport(0, 0, @intCast(fb_width), @intCast(fb_height));
+    ui_pipeline.setProjection(@floatFromInt(fb_width), @floatFromInt(fb_height));
+    clearWithBackground(fb_width, fb_height);
+    titlebar.renderTitlebar(@floatFromInt(fb_width), @floatFromInt(fb_height), titlebar_offset);
+    titlebar.renderSidebar(@floatFromInt(fb_width), @floatFromInt(fb_height), titlebar_offset);
+    sync_bridge.render(.{
+        .bg = g_theme.background,
+        .fg = g_theme.foreground,
+        .accent = g_theme.cursor_color,
+        .cell_h = font.g_titlebar_cell_height,
+        .fillQuadAlpha = ui_pipeline.fillQuadAlpha,
+        .roundedQuadAlpha = overlays.renderRoundedQuadAlpha,
+        .renderTextLimited = titlebar.renderTextLimited,
+        .glyphAdvance = titlebar.titlebarGlyphAdvance,
+    }, syncPageFrame(fb_width, fb_height));
 }
 
 fn renderSettingsFrame(fb_width: c_int, fb_height: c_int, titlebar_offset: f32, left_panels_w: f32, right_panels_w: f32) void {
@@ -5110,6 +5131,57 @@ pub fn passwordStoreHandleMouseWheel(xpos: i32, delta: i32) void {
     markUiDirty();
 }
 
+/// Open (or switch to) the Sync page, re-reading the sync settings.
+pub fn openSyncTab() bool {
+    const allocator = g_allocator orelse return false;
+    if (!tab.openSyncTab(allocator)) return false;
+    sync_bridge.openPage(allocator);
+    clearUiStateOnTabChange();
+    markUiDirty();
+    return true;
+}
+
+pub fn activeSyncPage() ?*sync_page.State {
+    const t = tab.activeTab() orelse return null;
+    return if (t.kind == .sync) sync_page.state() else null;
+}
+
+pub fn syncPageHandleKey(ev: input_key.KeyEvent) UiEffect {
+    if (activeSyncPage() == null) return .none;
+    sync_bridge.handleKey(ev);
+    return .repaint;
+}
+
+pub fn syncPagePaste(text: []const u8) bool {
+    return activeSyncPage() != null and sync_bridge.paste(text);
+}
+
+fn syncPageFrame(fb_width: c_int, fb_height: c_int) sync_bridge.Frame {
+    const left = leftPanelsWidth();
+    return .{
+        .window_height = @floatFromInt(fb_height),
+        .top_offset = currentTitlebarHeight(),
+        .content_x = left,
+        .content_width = @max(1, @as(f32, @floatFromInt(fb_width)) - left - rightPanelsWidthForWindow(fb_width)),
+        .cell_h = font.g_titlebar_cell_height,
+    };
+}
+
+pub fn syncPageHandleMousePress(xpos: f64, ypos: f64) bool {
+    if (activeSyncPage() == null) return false;
+    const fb = window_backend.framebufferSize(g_window orelse return false);
+    if (!sync_bridge.mousePress(syncPageFrame(fb.width, fb.height), @floatCast(xpos), @floatCast(ypos))) return false;
+    markUiDirty();
+    return true;
+}
+
+pub fn syncPageHandleMouseWheel(xpos: i32, delta: i32) void {
+    if (activeSyncPage() == null) return;
+    const fb = window_backend.framebufferSize(g_window orelse return);
+    sync_bridge.mouseWheel(syncPageFrame(fb.width, fb.height), @floatFromInt(xpos), delta);
+    markUiDirty();
+}
+
 pub fn reopenAiChatTabFromHistorySessionId(session_id: []const u8) bool {
     if (tab.switchToAiTabBySessionId(session_id)) {
         clearUiStateOnTabChange();
@@ -5338,6 +5410,7 @@ pub fn switchTab(idx: usize) void {
     if (deactivating_settings) overlays.settingsPageDidDeactivate();
     if (activeTab()) |active| {
         if (active.kind == .password_store and idx != active_tab_state.g_active_tab) password_store_page.state().didDeactivate();
+        if (active.kind == .sync and idx != active_tab_state.g_active_tab) sync_bridge.didDeactivate();
     }
     tab.switchTab(idx);
     clearUiStateOnTabChange();
@@ -5464,8 +5537,7 @@ pub fn equalizeSplits() void {
     if (tab.equalizeSplits(allocator)) {
         overlays.resize.g_split_resize_overlay_until = std.time.milliTimestamp() + overlays.RESIZE_OVERLAY_DURATION_MS;
         requestImmediateLayoutResize();
-        g_force_rebuild = true;
-        g_cells_valid = false;
+        applyUiEffect(.repaint);
     }
 }
 
@@ -5490,8 +5562,7 @@ pub fn swapPanels(a: SplitTree.Node.Handle, b: SplitTree.Node.Handle) bool {
     if (!tab.swapPanels(a, b)) return false;
     split_layout.invalidateCachedRects();
     handleActiveSurfaceChangeWithinTab();
-    g_force_rebuild = true;
-    g_cells_valid = false;
+    applyUiEffect(.repaint);
     return true;
 }
 
@@ -5736,6 +5807,8 @@ fn renderResizeFrame(width: i32, height: i32) void {
                 renderSettingsFrame(fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
             } else if (active_tab.kind == .password_store) {
                 renderPasswordStoreFrame(fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
+            } else if (active_tab.kind == .sync) {
+                renderSyncFrame(fb_width, fb_height, titlebar_offset);
             } else if (split_layout.soleTerminalSurface()) |surface| {
                 // Single surface: simple render path
                 const rend = &surface.surface_renderer;
@@ -8453,6 +8526,7 @@ fn runMainLoop(self: *AppWindow) !void {
         maybePrintMemoryDebug(std.time.milliTimestamp());
         flushAgentHistoryStoreIfDirty(false);
         pollUpdateCheck(self.app);
+        if (sync_bridge.poll()) applyUiEffect(.repaint);
         if (activeSkillCenter()) |sc_session| pollSkillCenterOp(sc_session);
         if (self.app.port_forward_manager.tick() and activePortForwarding() != null) applyUiEffect(.repaint);
 
@@ -8704,7 +8778,7 @@ fn runMainLoop(self: *AppWindow) !void {
             control_api.syncPanes(allocator);
             control_api.syncUiState(allocator);
             syncImeCaretPosition(win, split_count);
-            if (active_tab.kind != .ai_chat and active_tab.kind != .ai_history and active_tab.kind != .memory_center and active_tab.kind != .conversation_center and active_tab.kind != .skill_center and active_tab.kind != .port_forwarding and active_tab.kind != .settings and active_tab.kind != .password_store and synchronizedOutputPendingForVisibleSplits(split_count)) {
+            if (active_tab.kind != .ai_chat and active_tab.kind != .ai_history and active_tab.kind != .memory_center and active_tab.kind != .conversation_center and active_tab.kind != .skill_center and active_tab.kind != .port_forwarding and active_tab.kind != .settings and active_tab.kind != .password_store and active_tab.kind != .sync and synchronizedOutputPendingForVisibleSplits(split_count)) {
                 // Block instead of spinning at ~1kHz: the IO thread posts a
                 // wakeup when the application ends synchronized output (or new
                 // output arrives), and the timeout bounds the watchdog check.
@@ -8731,6 +8805,8 @@ fn runMainLoop(self: *AppWindow) !void {
                 renderSettingsFrame(fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
             } else if (active_tab.kind == .password_store) {
                 renderPasswordStoreFrame(fb_width, fb_height, titlebar_offset, left_panels_w, right_panels_w);
+            } else if (active_tab.kind == .sync) {
+                renderSyncFrame(fb_width, fb_height, titlebar_offset);
             } else if (post_process.g_post_enabled and activeSurface() != null) {
                 // Post-processing path: only render focused surface for now.
                 // (With no focused terminal — e.g. a preview pane focused — fall
