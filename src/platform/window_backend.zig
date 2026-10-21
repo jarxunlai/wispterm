@@ -216,6 +216,13 @@ pub fn imePreeditText(window: *const Window) []const u8 {
     return window.imePreeditText();
 }
 
+/// One-shot: true when the IME preedit changed since the last call, so the
+/// input loop can repaint it even when no key event came with the change.
+pub fn takeImePreeditChanged(window: *Window) bool {
+    if (comptime @hasDecl(Window, "takeImePreeditChanged")) return window.takeImePreeditChanged();
+    return false;
+}
+
 pub fn clientSize(window: *const Window) Size {
     return .{ .width = window.width, .height = window.height };
 }

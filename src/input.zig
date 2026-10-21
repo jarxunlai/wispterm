@@ -362,8 +362,7 @@ test "input: command palette arrow navigation requests a repaint" {
     overlays.commandPaletteOpen();
     try std.testing.expect(overlays.commandPaletteVisible());
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(arrow_down_event);
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -432,8 +431,7 @@ test "input: command palette text filtering requests a repaint" {
     overlays.commandPaletteOpen();
     try std.testing.expect(overlays.commandPaletteVisible());
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleChar(.{ .codepoint = 'a' });
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -474,8 +472,7 @@ test "input: session launcher arrow navigation requests a repaint" {
     overlays.sessionLauncherOpen();
     try std.testing.expect(overlays.sessionLauncherVisible());
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(arrow_down_event);
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -549,8 +546,7 @@ test "input: settings page arrow navigation requests a repaint" {
     overlays.settingsPageOpen();
     try std.testing.expect(overlays.settingsPageVisible());
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(arrow_down_event);
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -644,8 +640,7 @@ test "input: port forwarding arrow navigation requests a repaint" {
         active_tab_state.g_active_tab = previous_active;
     }
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(arrow_down_event);
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -738,8 +733,7 @@ test "input: skill center tool toggle requests a repaint" {
     skill_path_owned = false;
     session.mutex.unlock();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x45, .ctrl = false, .shift = false, .alt = false, .super = false });
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -817,8 +811,7 @@ test "input: skill center first-party tool toggle writes state and requests a re
     description_owned = false;
     session.mutex.unlock();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x45, .ctrl = false, .shift = false, .alt = false, .super = false });
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -960,8 +953,7 @@ test "input: skill center tool toggle is blocked while selection overlay is acti
     picker_target_0_owned = false;
     session.mutex.unlock();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x45, .ctrl = false, .shift = false, .alt = false, .super = false });
 
     const persisted_manifest = try tmp.dir.readFileAlloc(allocator, "tools/fake_tool/manifest.json", 4096);
@@ -1014,8 +1006,7 @@ test "input: empty skill center library import shortcut opens picker" {
 
     const session = AppWindow.activeSkillCenter() orelse return error.ExpectedSkillCenterTab;
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x49, .ctrl = false, .shift = false, .alt = false, .super = false });
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -1094,22 +1085,19 @@ test "input: skill center deploy and import keys ignore selected tool rows" {
     skill_path_owned = false;
     session.mutex.unlock();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x44, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
     try std.testing.expect(!AppWindow.skillCenterOverlayActive());
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x49, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
     try std.testing.expect(!AppWindow.skillCenterOverlayActive());
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = platform_input.key_enter, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
@@ -1160,8 +1148,7 @@ test "input: skill center tool import shortcut is a no-op when no file is select
         }
     }.open;
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x54, .ctrl = false, .shift = false, .alt = false, .super = false });
 
     try std.testing.expect(!AppWindow.g_force_rebuild);
@@ -1237,8 +1224,7 @@ test "input: skill center tool import preview keys import-scroll-cancel while te
     });
     session.mutex.unlock();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = platform_input.key_down, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(AppWindow.g_force_rebuild);
     try std.testing.expect(!AppWindow.g_cells_valid);
@@ -1246,8 +1232,7 @@ test "input: skill center tool import preview keys import-scroll-cancel while te
     try std.testing.expectEqual(@as(usize, 1), session.model.overlay.tool_import_preview.scroll);
     session.mutex.unlock();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = platform_input.key_enter, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(AppWindow.g_force_rebuild);
     try std.testing.expect(!AppWindow.g_cells_valid);
@@ -1257,8 +1242,7 @@ test "input: skill center tool import preview keys import-scroll-cancel while te
     session.mutex.unlock();
     try std.fs.accessAbsolute(stage_root, .{});
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = platform_input.key_escape, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(AppWindow.g_force_rebuild);
     try std.testing.expect(!AppWindow.g_cells_valid);
@@ -1270,8 +1254,7 @@ test "input: skill center tool import preview keys import-scroll-cancel while te
     session.mutex.lock();
     try session.model.openTextPreview("docx / SKILL.md", "preview");
     session.mutex.unlock();
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = platform_input.key_enter, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(AppWindow.g_force_rebuild);
     try std.testing.expect(!AppWindow.g_cells_valid);
@@ -1366,8 +1349,7 @@ test "input: skill center deploy and import keys are blocked while picker overla
     picker_target_0_owned = false;
     session.mutex.unlock();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x44, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
@@ -1380,8 +1362,7 @@ test "input: skill center deploy and import keys are blocked while picker overla
         }
     }
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x49, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
@@ -1519,8 +1500,7 @@ test "input: skill center main actions are blocked while import list overlay is 
     import_markers_owned = false;
     session.mutex.unlock();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x44, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
@@ -1533,8 +1513,7 @@ test "input: skill center main actions are blocked while import list overlay is 
         }
     }
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x49, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
@@ -1548,8 +1527,7 @@ test "input: skill center main actions are blocked while import list overlay is 
         session.model.sel_row = 1;
     }
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x54, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
@@ -1566,8 +1544,7 @@ test "input: skill center main actions are blocked while import list overlay is 
         }
     }
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(.{ .key_code = 0x45, .ctrl = false, .shift = false, .alt = false, .super = false });
     try std.testing.expect(!AppWindow.g_force_rebuild);
     try std.testing.expect(AppWindow.g_cells_valid);
@@ -1653,8 +1630,7 @@ test "input: terminal viewport mouse wheel scroll requests a repaint" {
     g_selecting = false;
     overlays.hideWhatsNew();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
 
     handleMouseWheel(.{ .delta = 120, .xpos = 20, .ypos = 40 });
 
@@ -1707,8 +1683,7 @@ test "input: file explorer mouse wheel scroll requests a repaint" {
     file_explorer.g_entry_count = 100; // total 2000px >> visible 100px → scrollable
     file_explorer.g_scroll_offset = 0;
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
 
     // Wheel "down" inside the panel (negative delta scrolls toward the bottom).
     handleMouseWheel(.{ .delta = -120, .xpos = 20, .ypos = 200 });
@@ -1793,8 +1768,7 @@ test "input: port forwarding form left/right arrows toggle Direction and request
     handleKey(arrow_down_event); // Name -> Profile
     handleKey(arrow_down_event); // Profile -> Direction
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(arrow_right_event);
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -1807,8 +1781,7 @@ test "input: port forwarding form left/right arrows toggle Direction and request
         try std.testing.expect(form.rule.direction == .local);
     }
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(arrow_left_event);
 
     try std.testing.expect(AppWindow.g_force_rebuild);
@@ -1893,8 +1866,7 @@ test "input: overlay navigation drives the render gate to repaint" {
     defer overlays.commandPaletteClose();
     overlays.commandPaletteOpen();
 
-    AppWindow.g_force_rebuild = false;
-    AppWindow.g_cells_valid = true;
+    resetInputRepaintForTest();
     handleKey(arrow_down_event);
 
     const signals = render_gate.RenderSignals{
@@ -2774,6 +2746,7 @@ pub fn processEvents(win: anytype) void {
         return;
     }
     processKeyAndCharEvents(win);
+    processImePreeditChange(win);
     processMouseButtonEvents(win);
     processMouseMoveEvents(win);
     processMouseWheelEvents(win);
@@ -2805,6 +2778,13 @@ fn processKeyAndCharEvents(win: anytype) void {
         g_pending_input_us = std.time.microTimestamp();
         g_pending_input_iter = AppWindow.g_loop_iter;
     }
+}
+
+// The render loop paints the IME preedit, so a preedit change must request
+// its own repaint: dictation streams interim text as marked text with no key
+// event at all (issue #671).
+fn processImePreeditChange(win: anytype) void {
+    if (window_backend.takeImePreeditChanged(win)) requestInputRepaint();
 }
 
 fn processMouseButtonEvents(win: anytype) void {
