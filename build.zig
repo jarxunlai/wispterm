@@ -971,7 +971,7 @@ pub fn build(b: *std.Build) void {
 
     if (b.graph.host.result.os.tag == .macos) {
         const metal_test_mod = b.createModule(.{
-            .root_source_file = b.path("src/renderer/gpu/metal/test.zig"),
+            .root_source_file = b.path("src/renderer/gpu/metal_test_root.zig"),
             .target = b.resolveTargetQuery(.{}),
             .optimize = optimize,
             .link_libc = true,

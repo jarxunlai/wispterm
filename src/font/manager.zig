@@ -114,6 +114,17 @@ pub threadlocal var g_titlebar_atlas_modified: usize = 0;
 pub threadlocal var g_titlebar_cell_width: f32 = 8;
 pub threadlocal var g_titlebar_cell_height: f32 = 14;
 pub threadlocal var g_titlebar_baseline: f32 = 3;
+/// Bumped by `resetTitlebarGlyphCache`, i.e. whenever titlebar glyph advances
+/// may change (UI font family/size/DPI reload). Layout caches built from
+/// `loadTitlebarGlyph` advances key on it to invalidate.
+pub threadlocal var g_titlebar_generation: u32 = 0;
+
+/// Drop every cached titlebar glyph. The caller owns the face/atlas lifecycle.
+pub fn resetTitlebarGlyphCache(allocator: std.mem.Allocator) void {
+    g_titlebar_cache.deinit(allocator);
+    g_titlebar_cache = .empty;
+    g_titlebar_generation +%= 1;
+}
 
 // Font fallback system
 pub threadlocal var g_ft_lib: ?freetype.Library = null;
