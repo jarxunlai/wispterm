@@ -236,6 +236,12 @@ pub fn computeSplitLayout(
     ch: f32, // font.cell_height
 ) usize {
     g_split_rect_count = 0;
+    // Consume the one-shot immediate-resize request before any early return.
+    // Tab switches always request it, and the render gate treats a pending
+    // request as "must render". Paneless tabs (AI Chat, Settings, …) have an
+    // empty tree; returning before the consume latched the flag and re-rendered
+    // every loop iteration until a terminal tab was shown (issue #675).
+    const immediate_resize = AppWindow.consumeImmediateLayoutResize();
     if (active_tab.tree.isEmpty()) return 0;
     const safe_content_w = @max(content_w, 1);
     const safe_content_h = @max(content_h, 1);
@@ -248,7 +254,7 @@ pub fn computeSplitLayout(
     _ = cw;
     _ = ch;
 
-    const resize_policy: Surface.ResizePolicy = if (AppWindow.consumeImmediateLayoutResize())
+    const resize_policy: Surface.ResizePolicy = if (immediate_resize)
         .immediate
     else
         .coalesced;
@@ -415,6 +421,18 @@ test "split_layout: soleTerminalSurface only for a single terminal rect" {
     g_split_rects[0] = terminal_rect;
     g_split_rect_count = 2;
     try std.testing.expect(soleTerminalSurface() == null);
+}
+
+test "split_layout: paneless tab consumes the immediate-resize request" {
+    // Issue #675: a tab switch requests an immediate layout resize, and the
+    // render gate re-renders while it is pending. A paneless tab (AI Chat,
+    // Settings, …) must still consume it, or the loop never goes idle.
+    defer _ = AppWindow.consumeImmediateLayoutResize();
+    const ai_chat_tab = TabState{ .kind = .ai_chat, .tree = SplitTree.empty };
+
+    AppWindow.requestImmediateLayoutResize();
+    try std.testing.expectEqual(@as(usize, 0), computeSplitLayout(&ai_chat_tab, 0, 0, 800, 600, 8, 16));
+    try std.testing.expect(!AppWindow.consumeImmediateLayoutResize());
 }
 
 test "split_layout: gridOrigin matches the drawn grid for single and split panes" {
