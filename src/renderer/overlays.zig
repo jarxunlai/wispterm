@@ -4937,15 +4937,15 @@ fn applyQuickAiConfig() void {
     const profiles = assistantProfiles().profiles[0..];
     var count = assistant_profile_store.loadProfiles(allocator, profiles);
     count = quick_ai_config.upsertProfiles(profiles, count, quickAi().key());
-    if (!quick_ai_config.bothProfilesPresent(profiles, count)) {
+    if (!quick_ai_config.profilePresent(profiles, count)) {
         quickAi().status = .store_full;
         AppWindow.applyUiEffect(.{ .needs_rebuild = true });
         return; // do not persist config keys, save, toast success, or close
     }
     assistantProfiles().profile_count = count;
     _ = assistant_profile_store.saveProfiles(allocator, profiles[0..count]);
-    Config.setConfigValue(allocator, "ai-default-profile", quick_ai_config.MAIN_PROFILE_NAME) catch {};
-    Config.setConfigValue(allocator, "ai-subagent-profile", quick_ai_config.SUB_PROFILE_NAME) catch {};
+    Config.setConfigValue(allocator, "ai-default-profile", quick_ai_config.PROFILE_NAME) catch {};
+    Config.setConfigValue(allocator, "ai-subagent-profile", quick_ai_config.PROFILE_NAME) catch {};
     showStatusToast(i18n.s().toast_quick_ai_done);
     closeQuickAiForm();
 }
@@ -5050,7 +5050,7 @@ fn clearAiForm() void {
     setAiDefault(.agent, AppWindow.ai_chat.DEFAULT_AGENT);
     setAiDefault(.protocol, AppWindow.ai_chat.DEFAULT_PROTOCOL);
     setAiDefault(.max_tokens, AppWindow.ai_chat.DEFAULT_MAX_TOKENS);
-    setAiDefault(.vision, AppWindow.ai_chat.DEFAULT_VISION);
+    setAiDefault(.vision, AppWindow.ai_chat.defaultVisionForModel(AppWindow.ai_chat.DEFAULT_MODEL));
 }
 
 fn appendAiFormCodepoint(field: usize, codepoint: u21) void {
@@ -5122,6 +5122,10 @@ fn cycleAiFormProtocol(forward: bool) void {
     }
     const model = aiField(.model);
     if (model.len == 0 or std.mem.eql(u8, model, AppWindow.ai_chat.DEFAULT_MODEL) or AppWindow.ai_chat.ApiProtocol.isSubscriptionModel(model)) {
+        // Vision follows the replaced model's default unless the user toggled it.
+        if (std.mem.eql(u8, aiField(.vision), AppWindow.ai_chat.defaultVisionForModel(model))) {
+            setAiDefault(.vision, AppWindow.ai_chat.defaultVisionForModel(preset.model));
+        }
         setAiDefault(.model, preset.model);
     }
 }
@@ -5133,6 +5137,8 @@ test "cycleAiFormProtocol prefills subscription endpoint and model from the defa
     const saved_base_buf = assistantProfiles().bufs[@intFromEnum(AiField.base_url)];
     const saved_model_len = assistantProfiles().lens[@intFromEnum(AiField.model)];
     const saved_model_buf = assistantProfiles().bufs[@intFromEnum(AiField.model)];
+    const saved_vision_len = assistantProfiles().lens[@intFromEnum(AiField.vision)];
+    const saved_vision_buf = assistantProfiles().bufs[@intFromEnum(AiField.vision)];
     defer {
         assistantProfiles().lens[@intFromEnum(AiField.protocol)] = saved_protocol_len;
         assistantProfiles().bufs[@intFromEnum(AiField.protocol)] = saved_protocol_buf;
@@ -5140,19 +5146,26 @@ test "cycleAiFormProtocol prefills subscription endpoint and model from the defa
         assistantProfiles().bufs[@intFromEnum(AiField.base_url)] = saved_base_buf;
         assistantProfiles().lens[@intFromEnum(AiField.model)] = saved_model_len;
         assistantProfiles().bufs[@intFromEnum(AiField.model)] = saved_model_buf;
+        assistantProfiles().lens[@intFromEnum(AiField.vision)] = saved_vision_len;
+        assistantProfiles().bufs[@intFromEnum(AiField.vision)] = saved_vision_buf;
     }
 
     setAiDefault(.protocol, "anthropic");
     setAiDefault(.base_url, AppWindow.ai_chat.DEFAULT_BASE_URL);
     setAiDefault(.model, AppWindow.ai_chat.DEFAULT_MODEL);
+    setAiDefault(.vision, AppWindow.ai_chat.defaultVisionForModel(AppWindow.ai_chat.DEFAULT_MODEL));
+    try std.testing.expectEqualStrings("on", aiField(.vision)); // deepseek-flash accepts images
     cycleAiFormProtocol(true);
     try std.testing.expectEqualStrings("codex", aiField(.protocol));
     try std.testing.expectEqualStrings("https://chatgpt.com/backend-api", aiField(.base_url));
     try std.testing.expectEqualStrings("gpt-5.4", aiField(.model));
+    try std.testing.expectEqualStrings("off", aiField(.vision)); // the default-on Vision left with deepseek-flash
 
+    setAiDefault(.vision, "on"); // a user toggle survives a model swap
     cycleAiFormProtocol(true); // codex -> kimi replaces the subscription model
     try std.testing.expectEqualStrings("kimi", aiField(.protocol));
     try std.testing.expectEqualStrings("kimi-for-coding", aiField(.model));
+    try std.testing.expectEqualStrings("on", aiField(.vision));
     setAiDefault(.model, "leave-me");
     setAiDefault(.base_url, "https://example.test/v1");
     cycleAiFormProtocol(true); // kimi -> xai must keep a custom endpoint and model
@@ -5171,8 +5184,9 @@ fn aiProtocolDisplay() []const u8 {
     return std.fmt.bufPrint(&S.buf, "{s}   <-/->", .{p.name()}) catch p.name();
 }
 
-/// Vision is an on/off ←/→ toggle (default off). Models with vision enabled can
-/// receive images pasted into the chat composer with Ctrl+Shift+V.
+/// Vision is an on/off ←/→ toggle (default on only for image-capable models such
+/// as deepseek-flash). Models with vision enabled can receive images pasted into
+/// the chat composer with Ctrl+Shift+V.
 fn toggleAiFormVision() void {
     const on = AppWindow.ai_chat.parseVisionEnabled(aiField(.vision));
     setAiDefault(.vision, if (on) "off" else "on");

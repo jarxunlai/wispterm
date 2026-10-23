@@ -14,6 +14,19 @@ pub const DEFAULT_STREAM = "false";
 pub const DEFAULT_AGENT = "true";
 pub const DEFAULT_MAX_TOKENS = "8192";
 pub const DEFAULT_VISION = "off";
+
+/// Model ids known to accept image input (OpenAI-format `image_url` blocks).
+/// DeepSeek: `deepseek-flash` does; `deepseek-v4-pro` is text-only.
+pub fn modelSupportsVision(model: []const u8) bool {
+    return std.mem.eql(u8, model, "deepseek-flash");
+}
+
+/// Vision value for a fresh profile on `model`. Saved profiles keep their own
+/// flag, and a legacy profile without one still falls back to DEFAULT_VISION.
+pub fn defaultVisionForModel(model: []const u8) []const u8 {
+    return if (modelSupportsVision(model)) "on" else DEFAULT_VISION;
+}
+
 pub const TOOL_CALL_REASONING_FALLBACK = "Tool call is required before answering.";
 
 // ---------------------------------------------------------------------------
@@ -1804,6 +1817,13 @@ test "parseApiResponse ignores null error on completed responses result" {
 test "isDeepSeekBaseUrl" {
     try std.testing.expect(isDeepSeekBaseUrl("https://api.deepseek.com/v1"));
     try std.testing.expect(!isDeepSeekBaseUrl("https://api.openai.com/v1"));
+}
+
+test "defaultVisionForModel turns vision on only for image-capable models" {
+    try std.testing.expectEqualStrings("on", defaultVisionForModel("deepseek-flash"));
+    try std.testing.expectEqualStrings(DEFAULT_VISION, defaultVisionForModel("deepseek-v4-pro"));
+    try std.testing.expectEqualStrings(DEFAULT_VISION, defaultVisionForModel("gpt-5.4"));
+    try std.testing.expectEqualStrings(DEFAULT_VISION, defaultVisionForModel(""));
 }
 
 test "isAnthropicBaseUrl detects the anthropic api host" {

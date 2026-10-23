@@ -62,7 +62,7 @@ pub const MAX_QUEUED_PROMPTS = prompt_queue.MAX_ENTRIES;
 
 pub const DEFAULT_NAME = "DeepSeek";
 pub const DEFAULT_BASE_URL = "https://api.deepseek.com";
-pub const DEFAULT_MODEL = "deepseek-v4-pro";
+pub const DEFAULT_MODEL = "deepseek-flash";
 pub const DEFAULT_SYSTEM_PROMPT = platform_agent_prompt.defaultSystemPrompt;
 pub const COPILOT_SYSTEM_PROMPT = platform_agent_prompt.copilotSystemPrompt;
 pub const DEFAULT_THINKING = ai_chat_protocol.DEFAULT_THINKING;
@@ -72,6 +72,7 @@ pub const DEFAULT_AGENT = ai_chat_protocol.DEFAULT_AGENT;
 pub const DEFAULT_PROTOCOL = ai_chat_protocol.DEFAULT_PROTOCOL;
 pub const DEFAULT_MAX_TOKENS = ai_chat_protocol.DEFAULT_MAX_TOKENS;
 pub const DEFAULT_VISION = ai_chat_protocol.DEFAULT_VISION;
+pub const defaultVisionForModel = ai_chat_protocol.defaultVisionForModel;
 
 /// Cap on a single pasted image (decoded PNG bytes) before base64. Larger images
 /// are dropped with a log rather than ballooning the request body.

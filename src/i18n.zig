@@ -624,7 +624,7 @@ const en = Strings{
     .shortcuts_unbound = "unbound",
 
     .quick_ai_form_title = "Quick Configure AI",
-    .quick_ai_intro = "Paste your DeepSeek API key to set up the main and subagent models.",
+    .quick_ai_intro = "Paste your DeepSeek API key to set up deepseek-flash (vision on) for chat and subagents.",
     .quick_ai_register_row = "1. Register at platform.deepseek.com  (Enter to open)",
     .quick_ai_tutorial_row = "2. Open the setup guide  (Enter to open)",
     .quick_ai_verify_row = "Verify & Save",
@@ -946,7 +946,7 @@ const zh_CN = Strings{
     .shortcuts_unbound = "未绑定",
 
     .quick_ai_form_title = "快速配置 AI",
-    .quick_ai_intro = "粘贴 DeepSeek API key，自动配好主模型和 subagent。",
+    .quick_ai_intro = "粘贴 DeepSeek API key，自动把 deepseek-flash（支持视觉）配为主模型和 subagent。",
     .quick_ai_register_row = "1. 去 platform.deepseek.com 注册（回车打开）",
     .quick_ai_tutorial_row = "2. 打开配置教程（回车打开）",
     .quick_ai_verify_row = "校验并保存",
@@ -1206,7 +1206,7 @@ pub fn commandDetail(action: CommandAction) ?[]const u8 {
         .wechat_status => "显示微信直连连接状态",
         .unbind_wechat => "清除已存储的微信直连绑定",
         .configure_feishu => "填写飞书 bot 的 App ID 和 App Secret",
-        .quick_configure_ai => "粘贴一个 DeepSeek API key，自动配好主模型和 subagent",
+        .quick_configure_ai => "粘贴一个 DeepSeek API key，自动把 deepseek-flash 配为主模型和 subagent",
         .export_ai_chat_markdown => "把当前 AI 对话保存为 Markdown",
         .export_ai_chat_markdown_clean => "保存用户提问与最终回答（不含思考过程）",
         .show_version => "显示 WispTerm 版本",
