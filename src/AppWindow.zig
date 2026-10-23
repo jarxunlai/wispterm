@@ -97,7 +97,7 @@ const conversation_center_session = @import("conversation_center/session.zig");
 pub const font = @import("font/manager.zig");
 pub const cell_renderer = @import("renderer/cell_renderer.zig");
 const cell_pipeline = @import("renderer/cell_pipeline.zig");
-pub const ui_pipeline = @import("renderer/ui_pipeline.zig");
+const ui_pipeline = @import("renderer/ui_pipeline.zig");
 pub const titlebar = @import("renderer/titlebar.zig");
 pub const input = @import("input.zig");
 pub const overlays = @import("renderer/overlays.zig");
@@ -7301,8 +7301,7 @@ fn rebuildIconFont(allocator: std.mem.Allocator, ft_lib: freetype.Library) void 
 fn clearTitlebarFont(allocator: std.mem.Allocator) void {
     if (font.g_titlebar_face) |old_tb| old_tb.deinit();
     font.g_titlebar_face = null;
-    font.g_titlebar_cache.deinit(allocator);
-    font.g_titlebar_cache = .empty;
+    font.resetTitlebarGlyphCache(allocator);
     if (font.g_titlebar_atlas) |*a| {
         a.deinit(allocator);
         font.g_titlebar_atlas = null;
@@ -8195,8 +8194,8 @@ fn runMainLoop(self: *AppWindow) !void {
         // as icon_cache above.
         if (font.g_titlebar_face) |f| f.deinit();
         font.g_titlebar_face = null;
-        font.g_titlebar_cache.deinit(allocator);
-        font.g_titlebar_cache = .empty;
+        font.resetTitlebarGlyphCache(allocator);
+        assistant_conversation_renderer.deinitMeasureCache(allocator);
         if (font.g_titlebar_atlas) |*a| {
             a.deinit(allocator);
             font.g_titlebar_atlas = null;

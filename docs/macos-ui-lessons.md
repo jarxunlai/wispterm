@@ -65,7 +65,8 @@ uniform 注入（不经过 ui_pipeline.setProjection），所以幸免于难。
 
 ### 工程化修复
 不能简单地在 `metal/gl_init.zig` 顶部加 `@import("../../ui_pipeline.zig")`，
-因为 `test-metal` 的 module root 是 `gpu/metal/`，Zig 0.15 拒绝 import 走出 root：
+因为 `test-metal` 当时的 module root 是 `gpu/metal/`（现在是 `gpu/`，见
+`gpu/metal_test_root.zig`，但 `ui_pipeline` 仍在 root 之外），Zig 0.15 拒绝 import 走出 root：
 
 ```
 error: import of file outside module path
@@ -155,9 +156,30 @@ release 是安全的——旧 buffer 的实际 dealloc 是 GPU 完成后异步�
 }
 ```
 
-每帧上百个 fillQuad → 上百次 `newBufferWithBytes:`，对小 quad（96 bytes）开销可忽略。
-更优解（未实施）：每帧一个 transient arena MTLBuffer，upload 累加 offset，
-`setVertexBuffer:offset:` 传 offset。Ghostty 用的就是这种方案。
+每帧上百个 fillQuad → 上百次 `newBufferWithBytes:`，当时认为对小 quad（96 bytes）开销可忽略。
+
+### 后续：per-frame transient arena + UI batch（issue #675 后续）
+
+实测并不可忽略：一个 3000 行 tool card 的 AI Chat 页，每个可见字形一次
+`newBufferWithBytes:`（走 IOGPU 内核调用），在去掉文本测量开销之后占了剩余帧时间的 ~70%。
+现在的做法：
+
+- `Buffer.uploadTransient`：只给"本帧画完就不再读"的 immediate-mode UI 数据用
+  （`ui_pipeline` 的 quad 和 batch 实例）。bridge 在一个 per-frame arena MTLBuffer 里
+  bump 分配（256 字节对齐），slot 记录 `offset`，encode 时 `setVertexBuffer:offset:`。
+  `frame_end` commit 之后 seal 掉 arena（只放掉自己的引用），所以已编码的字节永远
+  不会被覆盖——Bug #2 的 deferred-read 问题不需要 fence 就避开了。slot 和 command buffer
+  各自 retain arena，两边都放手后才释放。
+- 和 Ghostty 的区别：Ghostty（`renderer/generic.zig` SwapChain + `metal/buffer.zig`
+  `Buffer.sync`）三缓冲复用每帧的 buffer，用 semaphore 等 GPU 读完。我们每帧新建一个
+  arena（O(1) 次分配），因为 cell 实例缓冲只在 dirty 时才重新上传、要跨帧保留，
+  复用 arena 会把它们的数据覆盖掉；所以 cell 缓冲继续走普通 `upload`（独占 buffer）。
+- UI glyph batch 也在 Metal 上启用了（原先只有 OpenGL）：MSL 版
+  `ui_batch_vertex_source`，`render_state.pre_change_hook` /
+  `Pipeline.pre_use_hook` / `Framebuffer.bind` 的 flush 时机与 OpenGL 后端一一对应。
+  一帧的可见文字变成少数几次 instanced draw。
+- `zig build test-metal` 有像素级回归：同一个 buffer handle 在一帧里两次
+  upload+draw，读回两块不同颜色（把 offset 去掉就会失败）。
 
 ---
 
@@ -252,11 +274,22 @@ WispTerm 自己驱动事件循环（`AppWindow.runMainLoop` + `wispterm_macos_ap
 
 ---
 
+### 8. 不要把需要 16 字节对齐的大数组放进 `_Thread_local`
+
+bridge.m 的 slot 表曾经是 `static _Thread_local __attribute__((aligned(16)))` 数组。
+macOS 的 TLV 布局并不可靠地遵守这个对齐：数组落在哪里取决于整个二进制里**所有**
+threadlocal 的布局，新增一个无关的 Zig `threadlocal`（比如 batch flush hook）就让
+`test-metal` 在第一次 `wispterm_metal_buffer_create` 时触发 Debug 对齐检查 panic
+（Release 下则可能是 SIMD store 的 #GP）。现在 slot 表放在每线程 `calloc` 出来的
+`WispTermMetalRegistry` 里（malloc 保证 16 字节对齐），TLS 里只留一个指针，
+线程退出时由 pthread key 的析构函数释放。
+
 ## Zig 0.15.x 的小陷阱
 
 ### `@import` 不能走出 module root
 
-`test-metal` 的 module root 是 `gpu/metal/test.zig`，
+`test-metal` 当时的 module root 是 `gpu/metal/test.zig`（后来 Metal 后端开始共享
+`gpu/types.zig`，root 上移到 `gpu/metal_test_root.zig`），
 所以 `gpu/metal/gl_init.zig` 里 `@import("../../ui_pipeline.zig")` 会被拒：
 
 ```
@@ -316,7 +349,7 @@ toggle 前后的值，立刻确认 state 转变是否成功，下一步该看渲
 1. **像素回归测试**：用 offscreen `MTLTexture` 当 framebuffer 跑一帧，比对参考截图。
    能挡住 Bug #1 这种"逻辑过但视觉错"的退化。
 
-2. **Metal frame transient buffer arena**：当前每个 ui_pipeline.fillQuad 都
+2. ~~**Metal frame transient buffer arena**~~（已实施，见上文"后续"一节）：当时每个 ui_pipeline.fillQuad 都
    `newBufferWithBytes:`。对手游级别的 draw 数量（每帧几十）完全 OK，
    但如果引入 SSH 客户端的大文件预览或图像 grid，会变成瓶颈。
    Ghostty 的方案：单个大 MTLBuffer + 累加 offset + `setVertexBuffer:offset:`。

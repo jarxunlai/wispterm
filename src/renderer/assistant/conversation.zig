@@ -17,6 +17,42 @@ const detail_wrap = @import("../../composer_detail_wrap.zig");
 pub threadlocal var g_transcript_scrollbar_hover: bool = false;
 pub threadlocal var g_transcript_scrollbar_dragging: bool = false;
 
+/// Vertical layout of one message within a transcript pass.
+const BlockMetrics = struct {
+    block_h: f32,
+    reasoning_h: f32,
+    footer_h: f32,
+    gap: f32,
+};
+
+/// Transcript measurements that outlive a frame (see transcript_wrap.zig),
+/// plus the current paint pass's per-message metrics so `render` measures each
+/// message once. Per render thread, like the titlebar glyph cache whose
+/// advances it is keyed on; freed by `deinitMeasureCache` at window teardown.
+const MeasureState = struct {
+    cache: transcript_wrap.Cache = .{},
+    blocks: std.ArrayListUnmanaged(BlockMetrics) = .empty,
+    /// Body hashes computed in the current paint pass, by slice address.
+    /// `render` holds the session mutex for the whole pass, so a body cannot
+    /// change between its layout lookup and its paint lookup; the second one
+    /// reuses the hash instead of re-reading the whole body.
+    pass_hashes: [64]PassHash = @splat(.{}),
+    in_pass: bool = false,
+};
+const PassHash = struct { ptr: usize = 0, len: usize = 0, hash: u64 = 0, pass: u64 = 0 };
+threadlocal var g_measure: MeasureState = .{};
+
+/// Paint passes between cache sweeps, and how many passes an entry may go
+/// untouched (e.g. a background tab's transcript) before it is dropped.
+const MEASURE_SWEEP_INTERVAL: u64 = 8;
+const MEASURE_MAX_AGE: u64 = 32;
+
+pub fn deinitMeasureCache(allocator: std.mem.Allocator) void {
+    g_measure.cache.deinit(allocator);
+    g_measure.blocks.deinit(allocator);
+    g_measure = .{};
+}
+
 const TABLE_MAX_COLS = md.TABLE_MAX_COLS;
 const nextSourceLine = md.nextSourceLine;
 const cleanInline = md.cleanInline;
@@ -29,6 +65,7 @@ const font = AppWindow.font;
 const titlebar = AppWindow.titlebar;
 const ui_pipeline = @import("../ui_pipeline.zig");
 const ai_chat_layout = @import("../../assistant/conversation/layout.zig");
+const transcript_wrap = @import("transcript_wrap.zig");
 
 pub const LINE_PAD_X: f32 = 18;
 pub const HEADER_H: f32 = 54;
@@ -345,15 +382,16 @@ pub fn render(
         first_row = @min(first_row, max_first_row);
         session.input_scroll_row = first_row;
         const text_start = wrappedByteOffsetForLine(input_text, layout.text_w, first_row);
-        _ = renderWrappedText(
+        renderWrappedText(
             input_text[text_start..],
+            null,
             layout.text_x,
             window_height - layout.field_y - layout.field_h + composer_layout.Field.pad_top,
             layout.text_w,
             lineHeight(),
             fg,
             window_height,
-            window_height - layout.field_y,
+            .{ .top_px = -std.math.inf(f32), .bottom_px = window_height - layout.field_y },
         );
         renderInputScrollbar(layout, total_rows, visible_rows, first_row);
     }
@@ -391,7 +429,10 @@ pub fn render(
     const content_x = transcript_viewport.content_x;
     const viewport_bottom_top_px = transcript_viewport.viewport_bottom_top_px;
 
-    const content_h = transcriptContentHeight(session.messages.items, content_w);
+    g_measure.cache.beginPass();
+    g_measure.in_pass = true;
+    defer endMeasurePass();
+    const content_h = measureTranscript(session.messages.items, content_w);
     const max_scroll = @max(0.0, content_h - transcript_h);
     session.scroll_px = @min(session.scroll_px, max_scroll);
 
@@ -405,10 +446,12 @@ pub fn render(
     const gravity_offset = @max(0.0, transcript_h - content_h);
     const palette = markdownPalette(bg, fg, accent);
     const transcript_selected = session.transcript_select_all;
+    const band: transcript_wrap.Band = .{ .top_px = transcript_top, .bottom_px = viewport_bottom_top_px };
     var cursor_top = transcript_top + gravity_offset - session.scroll_px;
 
     for (session.messages.items, 0..) |msg, message_index| {
-        const block_h = messageBlockHeight(session.messages.items, message_index, content_w);
+        const metrics = measuredBlock(session.messages.items, message_index, content_w);
+        const block_h = metrics.block_h;
         if (rendersAsCard(msg)) {
             if (sectionVisible(cursor_top, block_h, transcript_top, viewport_bottom_top_px)) {
                 switch (toolGroupPosition(session.messages.items, message_index)) {
@@ -417,9 +460,9 @@ pub fn render(
                     .expanded_first => {
                         renderToolGroupHeader(session.messages.items, message_index, content_x, cursor_top, content_w, window_height, transcript_selected);
                         const card_top = cursor_top + detailHeaderHeight() + GROUP_HEADER_GAP;
-                        renderToolCard(msg, content_x, card_top, content_w, toolCardHeight(msg, content_w), window_height, transcript_selected);
+                        renderToolCard(msg, content_x, card_top, content_w, toolCardHeight(msg, content_w), window_height, transcript_selected, band);
                     },
-                    .none, .expanded_member => renderToolCard(msg, content_x, cursor_top, content_w, block_h, window_height, transcript_selected),
+                    .none, .expanded_member => renderToolCard(msg, content_x, cursor_top, content_w, block_h, window_height, transcript_selected, band),
                 }
             }
         } else if (sectionVisible(cursor_top, block_h, transcript_top, viewport_bottom_top_px)) {
@@ -441,15 +484,16 @@ pub fn render(
                 selection_range,
                 palette,
                 transcript_viewport.clip,
+                band,
             );
         }
         cursor_top += block_h;
 
         if (msg.reasoning) |reasoning| {
             if (reasoning.len > 0) {
-                const r_h = reasoningCardHeight(msg, content_w);
+                const r_h = metrics.reasoning_h;
                 if (sectionVisible(cursor_top, r_h, transcript_top, viewport_bottom_top_px)) {
-                    renderReasoningCard(reasoning, msg.reasoning_collapsed, content_x, cursor_top, content_w, r_h, window_height, transcript_selected);
+                    renderReasoningCard(reasoning, msg.reasoning_collapsed, content_x, cursor_top, content_w, r_h, window_height, transcript_selected, band);
                 }
                 cursor_top += r_h;
             }
@@ -457,15 +501,15 @@ pub fn render(
 
         if (msg.usage_footer) |footer| {
             if (footer.len > 0) {
-                const footer_h = usageFooterHeight(footer, content_w);
+                const footer_h = metrics.footer_h;
                 if (sectionVisible(cursor_top, footer_h, transcript_top, viewport_bottom_top_px)) {
-                    renderUsageFooter(footer, content_x, cursor_top, content_w, footer_h, window_height);
+                    renderUsageFooter(footer, content_x, cursor_top, content_w, footer_h, window_height, band);
                 }
                 cursor_top += footer_h;
             }
         }
 
-        cursor_top += blockGapAfter(session.messages.items, message_index);
+        cursor_top += metrics.gap;
     }
 
     ui_pipeline.endClip();
@@ -581,7 +625,7 @@ pub fn interactionHitTest(
                 const body_top = cursor_top + BUBBLE_PAD_Y + lineHeight();
                 const body_w = @max(1.0, bubble.w - BUBBLE_PAD_X * 2);
                 var hctx = BlockHitCtx{ .px = px, .py = py, .message_index = message_index };
-                forEachCopyBlock(msg.content, body_x, body_top, body_w, &hctx, checkBlockHit);
+                forEachCopyBlock(msg.content, body_x, body_top, body_w, std.math.inf(f32), &hctx, checkBlockHit);
                 if (hctx.hit) |h| return h;
             }
         }
@@ -1117,19 +1161,103 @@ fn blockGapAfter(msgs: []const ai_chat.Message, index: usize) f32 {
     return if (toolGroupPosition(msgs, index) == .hidden) 0 else BUBBLE_GAP;
 }
 
+fn blockMetrics(msgs: []const ai_chat.Message, index: usize, content_w: f32) BlockMetrics {
+    const msg = msgs[index];
+    const reasoning_h: f32 = if (msg.reasoning) |reasoning|
+        (if (reasoning.len > 0) reasoningCardHeight(msg, content_w) else 0)
+    else
+        0;
+    const footer_h: f32 = if (msg.usage_footer) |footer|
+        (if (footer.len > 0) usageFooterHeight(footer, content_w) else 0)
+    else
+        0;
+    return .{
+        .block_h = messageBlockHeight(msgs, index, content_w),
+        .reasoning_h = reasoning_h,
+        .footer_h = footer_h,
+        .gap = blockGapAfter(msgs, index),
+    };
+}
+
+fn addBlockHeight(content_h: f32, metrics: BlockMetrics) f32 {
+    // Same accumulation order as the paint loop's cursor advance.
+    return content_h + metrics.block_h + metrics.reasoning_h + metrics.footer_h + metrics.gap;
+}
+
 fn transcriptContentHeight(msgs: []const ai_chat.Message, content_w: f32) f32 {
     var content_h: f32 = 0;
-    for (msgs, 0..) |msg, i| {
-        content_h += messageBlockHeight(msgs, i, content_w);
-        if (msg.reasoning) |reasoning| {
-            if (reasoning.len > 0) content_h += reasoningCardHeight(msg, content_w);
-        }
-        if (msg.usage_footer) |footer| {
-            if (footer.len > 0) content_h += usageFooterHeight(footer, content_w);
-        }
-        content_h += blockGapAfter(msgs, i);
+    for (0..msgs.len) |i| content_h = addBlockHeight(content_h, blockMetrics(msgs, i, content_w));
+    return content_h;
+}
+
+/// `transcriptContentHeight` for a paint pass: also records each message's
+/// metrics so the paint loop (`measuredBlock`) does not measure them again.
+fn measureTranscript(msgs: []const ai_chat.Message, content_w: f32) f32 {
+    g_measure.blocks.clearRetainingCapacity();
+    const allocator = AppWindow.g_allocator;
+    var content_h: f32 = 0;
+    for (0..msgs.len) |i| {
+        const metrics = blockMetrics(msgs, i, content_w);
+        content_h = addBlockHeight(content_h, metrics);
+        if (allocator) |a| g_measure.blocks.append(a, metrics) catch {};
     }
     return content_h;
+}
+
+fn measuredBlock(msgs: []const ai_chat.Message, index: usize, content_w: f32) BlockMetrics {
+    if (g_measure.blocks.items.len == msgs.len) return g_measure.blocks.items[index];
+    return blockMetrics(msgs, index, content_w);
+}
+
+fn endMeasurePass() void {
+    g_measure.in_pass = false;
+    if (g_measure.cache.pass % MEASURE_SWEEP_INTERVAL != 0) return;
+    const allocator = AppWindow.g_allocator orelse return;
+    g_measure.cache.sweep(allocator, MEASURE_MAX_AGE);
+}
+
+/// Cache key of a whole message body, hashing it at most once per pass.
+fn bodyKey(kind: transcript_wrap.Kind, text: []const u8, max_w: f32) transcript_wrap.Key {
+    const metrics = titlebarMetricsKey();
+    if (!g_measure.in_pass) return transcript_wrap.Key.of(kind, text, max_w, metrics);
+    const addr = @intFromPtr(text.ptr);
+    const slot = &g_measure.pass_hashes[(addr >> 4) % g_measure.pass_hashes.len];
+    if (slot.pass != g_measure.cache.pass or slot.ptr != addr or slot.len != text.len) {
+        slot.* = .{ .ptr = addr, .len = text.len, .hash = transcript_wrap.contentHash(text), .pass = g_measure.cache.pass };
+    }
+    return transcript_wrap.Key.init(kind, text.len, slot.hash, max_w, metrics);
+}
+
+/// Fingerprint of everything titlebar glyph advances depend on, so cached
+/// wraps go stale on a UI font, size, or DPI change.
+fn titlebarMetricsKey() u64 {
+    const parts = [_]u64{
+        font.g_titlebar_generation,
+        @as(u32, @bitCast(font.g_titlebar_cell_width)),
+        @as(u32, @bitCast(font.g_titlebar_cell_height)),
+    };
+    return std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(&parts));
+}
+
+/// Wrapped-line index of a whole message body at `max_w`, cached across
+/// frames. Null only when the cache cannot allocate (callers then wrap
+/// uncached). The anchors stay valid until the next cache sweep.
+fn wrappedIndex(text: []const u8, max_w: f32) ?transcript_wrap.Index {
+    const allocator = AppWindow.g_allocator orelse return null;
+    const key = bodyKey(.wrapped, text, max_w);
+    if (g_measure.cache.get(key)) |entry| return entry.index;
+    const index = transcript_wrap.Index.build(allocator, text, max_w, &glyphAdvance) catch return null;
+    const entry = g_measure.cache.put(allocator, key, .{ .index = index }) catch {
+        index.deinit(allocator);
+        return null;
+    };
+    return entry.index;
+}
+
+/// `plainContentHeight` for a whole message body (cached).
+fn bodyContentHeight(text: []const u8, max_w: f32, line_h: f32) f32 {
+    const lines = if (wrappedIndex(text, max_w)) |index| index.lines else countWrappedLines(text, max_w);
+    return @as(f32, @floatFromInt(@max(@as(usize, 1), lines))) * line_h;
 }
 
 fn bubbleHeight(role: ai_chat.Role, text: []const u8, max_w: f32) f32 {
@@ -1138,7 +1266,7 @@ fn bubbleHeight(role: ai_chat.Role, text: []const u8, max_w: f32) f32 {
     const body_h = if (role == .assistant)
         markdownContentHeight(text, inner_w)
     else
-        plainContentHeight(text, inner_w, lineHeight());
+        bodyContentHeight(text, inner_w, lineHeight());
     return BUBBLE_PAD_Y * 2 + lineHeight() + body_h;
 }
 
@@ -1146,7 +1274,7 @@ fn toolCardHeight(msg: ai_chat.Message, max_w: f32) f32 {
     const body_h = if (msg.content_collapsed)
         0
     else
-        plainContentHeight(msg.content, @max(1.0, max_w - DETAIL_PAD_X * 2), lineHeight()) + DETAIL_PAD_Y * 2;
+        bodyContentHeight(msg.content, @max(1.0, max_w - DETAIL_PAD_X * 2), lineHeight()) + DETAIL_PAD_Y * 2;
     return detailHeaderHeight() + body_h;
 }
 
@@ -1155,19 +1283,29 @@ fn reasoningCardHeight(msg: ai_chat.Message, max_w: f32) f32 {
     const body_h = if (msg.reasoning_collapsed)
         0
     else
-        plainContentHeight(reasoning, @max(1.0, max_w - DETAIL_PAD_X * 2), reasoningLineHeight()) + DETAIL_PAD_Y * 2;
+        bodyContentHeight(reasoning, @max(1.0, max_w - DETAIL_PAD_X * 2), reasoningLineHeight()) + DETAIL_PAD_Y * 2;
     return detailHeaderHeight() + body_h;
 }
 
 fn usageFooterHeight(text: []const u8, max_w: f32) f32 {
-    return USAGE_FOOTER_PAD_TOP + plainContentHeight(text, @max(1.0, max_w - BUBBLE_PAD_X * 2), reasoningLineHeight());
+    return USAGE_FOOTER_PAD_TOP + bodyContentHeight(text, @max(1.0, max_w - BUBBLE_PAD_X * 2), reasoningLineHeight());
 }
 
 fn plainContentHeight(text: []const u8, max_w: f32, line_h: f32) f32 {
     return @as(f32, @floatFromInt(@max(@as(usize, 1), countWrappedLines(text, max_w)))) * line_h;
 }
 
+/// Height of an assistant message's markdown body (cached across frames).
 fn markdownContentHeight(text: []const u8, max_w: f32) f32 {
+    const allocator = AppWindow.g_allocator orelse return measureMarkdownContentHeight(text, max_w);
+    const key = bodyKey(.markdown, text, max_w);
+    if (g_measure.cache.get(key)) |entry| return entry.height;
+    const height = measureMarkdownContentHeight(text, max_w);
+    _ = g_measure.cache.put(allocator, key, .{ .height = height }) catch {};
+    return height;
+}
+
+fn measureMarkdownContentHeight(text: []const u8, max_w: f32) f32 {
     if (std.mem.trim(u8, text, " \t\r\n").len == 0) return lineHeight();
 
     const palette = markdownPalette(AppWindow.g_theme.background, AppWindow.g_theme.foreground, AppWindow.g_theme.cursor_color);
@@ -1216,6 +1354,7 @@ fn renderMessageBubble(
     selection_range: ?ai_chat.TextSelectionRange,
     palette: MarkdownPalette,
     transcript_clip: ai_chat_layout.DrawRect,
+    band: transcript_wrap.Band,
 ) void {
     const bg = AppWindow.g_theme.background;
     const fg = AppWindow.g_theme.foreground;
@@ -1242,13 +1381,13 @@ fn renderMessageBubble(
     const body_top = top_px + BUBBLE_PAD_Y + lineHeight();
     const body_w = @max(1.0, bubble.w - BUBBLE_PAD_X * 2);
     if (role == .assistant) {
-        _ = renderMarkdownContent(
+        renderMarkdownContent(
             text,
             body_x,
             body_top,
             body_w,
             window_height,
-            window_height,
+            band,
             palette,
             selection_range,
             session,
@@ -1256,8 +1395,9 @@ fn renderMessageBubble(
             transcript_clip,
         );
     } else {
-        renderWrappedSelection(text, 0, body_x, body_top, body_w, lineHeight(), selection_range, window_height, window_height);
-        _ = renderWrappedText(text, body_x, body_top, body_w, lineHeight(), fg, window_height, window_height);
+        const index = wrappedIndex(text, body_w);
+        renderWrappedSelection(text, index, 0, body_x, body_top, body_w, lineHeight(), selection_range, window_height, band);
+        renderWrappedText(text, index, body_x, body_top, body_w, lineHeight(), fg, window_height, band);
     }
 }
 
@@ -1298,7 +1438,7 @@ fn renderToolGroupHeader(msgs: []const ai_chat.Message, start: usize, x: f32, to
     }
 }
 
-fn renderToolCard(msg: ai_chat.Message, x: f32, top_px: f32, w: f32, h: f32, window_height: f32, selected: bool) void {
+fn renderToolCard(msg: ai_chat.Message, x: f32, top_px: f32, w: f32, h: f32, window_height: f32, selected: bool, band: transcript_wrap.Band) void {
     const bg = AppWindow.g_theme.background;
     const fg = AppWindow.g_theme.foreground;
     const accent = AppWindow.g_theme.cursor_color;
@@ -1338,20 +1478,22 @@ fn renderToolCard(msg: ai_chat.Message, x: f32, top_px: f32, w: f32, h: f32, win
     }
 
     if (!msg.content_collapsed) {
-        _ = renderWrappedText(
+        const body_w = @max(1.0, w - DETAIL_PAD_X * 2);
+        renderWrappedText(
             msg.content,
+            wrappedIndex(msg.content, body_w),
             x + DETAIL_PAD_X,
             top_px + header_h + DETAIL_PAD_Y,
-            @max(1.0, w - DETAIL_PAD_X * 2),
+            body_w,
             lineHeight(),
             mixColor(bg, fg, 0.84),
             window_height,
-            window_height,
+            band,
         );
     }
 }
 
-fn renderReasoningCard(text: []const u8, collapsed: bool, x: f32, top_px: f32, w: f32, h: f32, window_height: f32, selected: bool) void {
+fn renderReasoningCard(text: []const u8, collapsed: bool, x: f32, top_px: f32, w: f32, h: f32, window_height: f32, selected: bool, band: transcript_wrap.Band) void {
     const bg = AppWindow.g_theme.background;
     const fg = AppWindow.g_theme.foreground;
     const accent = AppWindow.g_theme.cursor_color;
@@ -1378,35 +1520,38 @@ fn renderReasoningCard(text: []const u8, collapsed: bool, x: f32, top_px: f32, w
     }
 
     if (!collapsed) {
-        _ = renderWrappedText(
+        const body_w = @max(1.0, w - DETAIL_PAD_X * 2);
+        renderWrappedText(
             text,
+            wrappedIndex(text, body_w),
             x + DETAIL_PAD_X,
             top_px + header_h + DETAIL_PAD_Y,
-            @max(1.0, w - DETAIL_PAD_X * 2),
+            body_w,
             reasoningLineHeight(),
             mixColor(bg, fg, 0.58),
             window_height,
-            window_height,
+            band,
         );
     }
 }
 
-fn renderUsageFooter(text: []const u8, x: f32, top_px: f32, w: f32, h: f32, window_height: f32) void {
+fn renderUsageFooter(text: []const u8, x: f32, top_px: f32, w: f32, h: f32, window_height: f32, band: transcript_wrap.Band) void {
     const bg = AppWindow.g_theme.background;
     const fg = AppWindow.g_theme.foreground;
     const accent = AppWindow.g_theme.cursor_color;
     const body_x = x + BUBBLE_PAD_X;
     const body_w = @max(1.0, w - BUBBLE_PAD_X * 2);
     const top = top_px + USAGE_FOOTER_PAD_TOP;
-    _ = renderWrappedText(
+    renderWrappedText(
         text,
+        wrappedIndex(text, body_w),
         body_x,
         top,
         body_w,
         reasoningLineHeight(),
         mixColor(bg, fg, 0.58),
         window_height,
-        window_height,
+        band,
     );
     const y = window_height - top_px - h;
     ui_pipeline.fillQuadAlpha(body_x, y + h - 1, @max(1.0, @min(body_w, measureText(text))), 1, mixColor(bg, accent, 0.28), 0.34);
@@ -2246,23 +2391,24 @@ fn renderMarkdownContent(
     top_px: f32,
     max_w: f32,
     window_height: f32,
-    clip_bottom_top_px: f32,
+    band: transcript_wrap.Band,
     palette: MarkdownPalette,
     selection_range: ?ai_chat.TextSelectionRange,
     session: ?*ai_chat.Session,
     message_index: usize,
     transcript_clip: ai_chat_layout.DrawRect,
-) f32 {
-    if (std.mem.trim(u8, text, " \t\r\n").len == 0) {
-        return renderWrappedText("", x, top_px, max_w, lineHeight(), palette.normal, window_height, clip_bottom_top_px);
-    }
+) void {
+    if (std.mem.trim(u8, text, " \t\r\n").len == 0) return;
 
     var cursor: usize = 0;
     var display_cursor: usize = 0;
     var current_top = top_px;
     var in_code = false;
+    // Below this nothing can reach the transcript viewport (one line of
+    // margin for glyphs overhanging their line box).
+    const stop_px = band.bottom_px + lineHeight();
 
-    while (cursor < text.len) {
+    while (cursor < text.len and current_top <= stop_px) {
         if (!in_code and isMarkdownTableStart(text, cursor)) {
             const table_start = cursor;
             const end = tableBlockEnd(text, cursor);
@@ -2308,43 +2454,48 @@ fn renderMarkdownContent(
             },
             .text => {
                 const body_h = plainContentHeight(prepared.text, @max(1.0, max_w - prepared.indent), prepared.line_h);
-                if (prepared.background) |bg_color| {
-                    renderTopQuad(x - 8, max_w + 16, window_height, current_top, body_h, bg_color);
+                // Lines wholly above the viewport only advance the layout.
+                if (current_top + body_h + lineHeight() >= band.top_px) {
+                    if (prepared.background) |bg_color| {
+                        renderTopQuad(x - 8, max_w + 16, window_height, current_top, body_h, bg_color);
+                    }
+                    if (prepared.left_rule) |rule_color| {
+                        renderTopQuad(x - 8, DETAIL_RULE_W, window_height, current_top, body_h, rule_color);
+                    }
+                    if (prepared.underline) {
+                        renderTopQuad(x, max_w, window_height, current_top + body_h - 3, 1, mixColor(AppWindow.g_theme.background, AppWindow.g_theme.cursor_color, 0.32));
+                    }
+                    renderWrappedSelection(
+                        prepared.text,
+                        null,
+                        display_cursor,
+                        x + prepared.indent,
+                        current_top,
+                        @max(1.0, max_w - prepared.indent),
+                        prepared.line_h,
+                        selection_range,
+                        window_height,
+                        band,
+                    );
+                    renderWrappedText(
+                        prepared.text,
+                        null,
+                        x + prepared.indent,
+                        current_top,
+                        @max(1.0, max_w - prepared.indent),
+                        prepared.line_h,
+                        prepared.color,
+                        window_height,
+                        band,
+                    );
                 }
-                if (prepared.left_rule) |rule_color| {
-                    renderTopQuad(x - 8, DETAIL_RULE_W, window_height, current_top, body_h, rule_color);
-                }
-                if (prepared.underline) {
-                    renderTopQuad(x, max_w, window_height, current_top + body_h - 3, 1, mixColor(AppWindow.g_theme.background, AppWindow.g_theme.cursor_color, 0.32));
-                }
-                renderWrappedSelection(
-                    prepared.text,
-                    display_cursor,
-                    x + prepared.indent,
-                    current_top,
-                    @max(1.0, max_w - prepared.indent),
-                    prepared.line_h,
-                    selection_range,
-                    window_height,
-                    clip_bottom_top_px,
-                );
-                current_top = renderWrappedText(
-                    prepared.text,
-                    x + prepared.indent,
-                    current_top,
-                    @max(1.0, max_w - prepared.indent),
-                    prepared.line_h,
-                    prepared.color,
-                    window_height,
-                    clip_bottom_top_px,
-                );
+                current_top += body_h;
             },
         }
         display_cursor += prepared.text.len + 1;
     }
 
-    forEachCopyBlock(text, x, top_px, max_w, window_height, drawCopyBlockButton);
-    return current_top - top_px;
+    forEachCopyBlock(text, x, top_px, max_w, stop_px, window_height, drawCopyBlockButton);
 }
 
 const CopyBlock = struct {
@@ -2358,12 +2509,14 @@ const CopyBlock = struct {
 /// to draw the buttons and `interactionHitTest` calls it to detect clicks, so a
 /// button the user sees and the region a click maps to come from one geometry
 /// source. Vertical advance MUST stay in lockstep with markdownContentHeight /
-/// renderMarkdownContent, or the buttons drift off their blocks.
+/// renderMarkdownContent, or the buttons drift off their blocks. Blocks
+/// starting below `stop_px` are not visited.
 fn forEachCopyBlock(
     text: []const u8,
     x: f32,
     top_px: f32,
     max_w: f32,
+    stop_px: f32,
     ctx: anytype,
     comptime emit: anytype,
 ) void {
@@ -2373,7 +2526,7 @@ fn forEachCopyBlock(
     var current_top = top_px;
     var in_code = false;
 
-    while (cursor < text.len) {
+    while (cursor < text.len and current_top <= stop_px) {
         if (!in_code and isMarkdownTableStart(text, cursor)) {
             const start = cursor;
             const end = tableBlockEnd(text, cursor);
@@ -2823,6 +2976,7 @@ fn intersectDrawRect(a: ai_chat_layout.DrawRect, b: ai_chat_layout.DrawRect) ai_
 
 fn renderWrappedSelection(
     text: []const u8,
+    index: ?transcript_wrap.Index,
     base_offset: usize,
     x: f32,
     top_px: f32,
@@ -2830,36 +2984,15 @@ fn renderWrappedSelection(
     line_h: f32,
     selection_range: ?ai_chat.TextSelectionRange,
     window_height: f32,
-    clip_bottom_top_px: f32,
+    band: transcript_wrap.Band,
 ) void {
     const range = selection_range orelse return;
     if (range.start >= range.end) return;
 
-    var line_start: usize = 0;
-    var line_width: f32 = 0;
-    var i: usize = 0;
-    var current_top = top_px;
-    while (i < text.len) {
-        if (text[i] == '\n') {
-            renderTextLineSelection(text[line_start..i], base_offset + line_start, x, current_top, line_h, range, window_height, clip_bottom_top_px);
-            current_top += line_h;
-            i += 1;
-            line_start = i;
-            line_width = 0;
-            continue;
-        }
-        const item = nextCodepoint(text, i);
-        if (line_width > 0 and line_width + item.advance > max_w) {
-            renderTextLineSelection(text[line_start..i], base_offset + line_start, x, current_top, line_h, range, window_height, clip_bottom_top_px);
-            current_top += line_h;
-            line_start = i;
-            line_width = 0;
-            continue;
-        }
-        line_width += item.advance;
-        i += item.len;
+    var lines = transcript_wrap.Visible.init(text, index, top_px, max_w, line_h, band, &glyphAdvance);
+    while (lines.next()) |v| {
+        renderTextLineSelection(text[v.line.start..v.line.end], base_offset + v.line.start, x, v.top_px, line_h, range, window_height, window_height);
     }
-    renderTextLineSelection(text[line_start..i], base_offset + line_start, x, current_top, line_h, range, window_height, clip_bottom_top_px);
 }
 
 fn renderTextLineSelection(
@@ -2885,42 +3018,25 @@ fn renderTextLineSelection(
     renderTopQuad(x + prefix_w, selected_w, window_height, top_px + @max(0.0, (line_h - font.g_titlebar_cell_height) * 0.5) - 1, @max(1.0, font.g_titlebar_cell_height + 3), selection_color);
 }
 
+/// Paint `text` wrapped to `max_w` from `top_px`, only the lines that can
+/// reach `band`. With `index` (a whole-body `wrappedIndex`) wrapping resumes
+/// next to the first visible line instead of at byte 0, so a long body costs
+/// its visible lines, not its length.
 fn renderWrappedText(
     text: []const u8,
+    index: ?transcript_wrap.Index,
     x: f32,
     top_px: f32,
     max_w: f32,
     line_h: f32,
     color: [3]f32,
     window_height: f32,
-    clip_bottom_top_px: f32,
-) f32 {
-    var line_start: usize = 0;
-    var line_width: f32 = 0;
-    var i: usize = 0;
-    var current_top = top_px;
-    while (i < text.len) {
-        if (text[i] == '\n') {
-            renderTextLine(text[line_start..i], x, current_top, max_w, color, window_height, clip_bottom_top_px);
-            current_top += line_h;
-            i += 1;
-            line_start = i;
-            line_width = 0;
-            continue;
-        }
-        const item = nextCodepoint(text, i);
-        if (line_width > 0 and line_width + item.advance > max_w) {
-            renderTextLine(text[line_start..i], x, current_top, max_w, color, window_height, clip_bottom_top_px);
-            current_top += line_h;
-            line_start = i;
-            line_width = 0;
-            continue;
-        }
-        line_width += item.advance;
-        i += item.len;
+    band: transcript_wrap.Band,
+) void {
+    var lines = transcript_wrap.Visible.init(text, index, top_px, max_w, line_h, band, &glyphAdvance);
+    while (lines.next()) |v| {
+        renderTextLine(text[v.line.start..v.line.end], x, v.top_px, max_w, color, window_height, window_height);
     }
-    renderTextLine(text[line_start..i], x, current_top, max_w, color, window_height, clip_bottom_top_px);
-    return current_top + line_h;
 }
 
 fn renderTextLine(text: []const u8, x: f32, top_px: f32, max_w: f32, color: [3]f32, window_height: f32, clip_bottom_top_px: f32) void {
@@ -2948,26 +3064,7 @@ fn nextCodepoint(text: []const u8, i: usize) CodepointItem {
 }
 
 fn countWrappedLines(text: []const u8, max_w: f32) usize {
-    if (text.len == 0) return 1;
-    var lines: usize = 1;
-    var width: f32 = 0;
-    var i: usize = 0;
-    while (i < text.len) {
-        if (text[i] == '\n') {
-            lines += 1;
-            width = 0;
-            i += 1;
-            continue;
-        }
-        const item = nextCodepoint(text, i);
-        if (width > 0 and width + item.advance > max_w) {
-            lines += 1;
-            width = 0;
-        }
-        width += item.advance;
-        i += item.len;
-    }
-    return lines;
+    return transcript_wrap.countLines(text, max_w, &glyphAdvance);
 }
 
 pub fn inputLayout(panel_x: f32, panel_w: f32, text: []const u8) InputLayout {
@@ -3170,7 +3267,7 @@ test "markdown table wrapping height and selection share cell geometry" {
             std.debug.assert(block.button.top_px + block.button.h <= TABLE_TOOLBAR_H);
         }
     }{};
-    forEachCopyBlock(text, 0, 0, 220, &copy_ctx, @TypeOf(copy_ctx).check);
+    forEachCopyBlock(text, 0, 0, 220, std.math.inf(f32), &copy_ctx, @TypeOf(copy_ctx).check);
     try std.testing.expectEqual(@as(usize, 1), copy_ctx.count);
     const sparse = "| Name | Path |\n| --- | --- |\n| short\n| next | value |\n";
     const sparse_table = TableLayout.init(sparse, 0, sparse.len, 220);
