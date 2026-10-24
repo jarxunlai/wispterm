@@ -99,6 +99,13 @@ jobs:
       - name: Full tests
         run: zig build test-full -Dtarget=native
 
+      # macOS 12 is best-effort and no hosted runner can run it, so guard the
+      # floor statically: fail on an Objective-C API newer than the minimum in
+      # build.zig that is not wrapped in @available, and on a release-style
+      # .app whose binary minos or Info.plist LSMinimumSystemVersion drifts.
+      - name: macOS minimum version checks
+        run: zig build check-macos-availability check-macos-minimum -Dtarget=aarch64-macos
+
   remote-ts:
     name: Remote TypeScript
     needs: changes

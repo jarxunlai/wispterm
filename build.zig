@@ -72,8 +72,33 @@ const MacosBundleMetadata = struct {
     executable_name: []const u8,
     display_name: []const u8,
     bundle_identifier: []const u8,
-    minimum_system_version: []const u8,
 };
+
+/// Oldest macOS the app runs on. Ghostty pins 13.0 (`osVersionMin` in
+/// `src/build/Config.zig`: the oldest release Apple still patches); WispTerm
+/// keeps macOS 12 as best-effort. No hosted CI runner can run 12, so
+/// `check-macos-availability` and `check-macos-minimum` guard it statically.
+const macos_minimum_version: std.SemanticVersion = .{ .major = 12, .minor = 0, .patch = 0 };
+
+/// A macOS target that names no version (`-Dtarget=aarch64-macos`,
+/// `-Dtarget=native`) would otherwise get Zig's default minimum (13.0 in Zig
+/// 0.15.2) or the build host's own version. Pin it to `macos_minimum_version`,
+/// as Ghostty does with `osVersionMin`. An explicit version
+/// (`-Dtarget=aarch64-macos.14.0`) is kept. Returns null when nothing changes.
+fn macosMinimumVersionQuery(query: std.Target.Query, os_tag: std.Target.Os.Tag) ?std.Target.Query {
+    if (os_tag != .macos or query.os_version_min != null) return null;
+    var pinned = query;
+    pinned.os_version_min = .{ .semver = macos_minimum_version };
+    return pinned;
+}
+
+/// `LSMinimumSystemVersion` spelling: "12.0", or "12.0.1" when a patch is set.
+fn macosVersionString(allocator: std.mem.Allocator, version: std.SemanticVersion) []const u8 {
+    return if (version.patch == 0)
+        std.fmt.allocPrint(allocator, "{d}.{d}", .{ version.major, version.minor }) catch @panic("OOM")
+    else
+        std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ version.major, version.minor, version.patch }) catch @panic("OOM");
+}
 
 const EmbeddedBrowserBackend = enum {
     none,
@@ -159,7 +184,6 @@ fn macosBundleMetadata() MacosBundleMetadata {
         .executable_name = "WispTerm",
         .display_name = "WispTerm",
         .bundle_identifier = "com.wispterm.terminal",
-        .minimum_system_version = "13.0",
     };
 }
 
@@ -204,7 +228,13 @@ fn macosEntitlementsPath() []const u8 {
     return "packaging/macos/WispTerm.entitlements";
 }
 
-fn macosInfoPlist(allocator: std.mem.Allocator, app_version: []const u8) []const u8 {
+fn macosMinimumCheckScriptPath() []const u8 {
+    return "packaging/macos/check-minimum-version.sh";
+}
+
+/// `minimum_system_version` is the binary's own deployment target, so Launch
+/// Services (Info.plist) and dyld (LC_BUILD_VERSION minos) agree on the floor.
+fn macosInfoPlist(allocator: std.mem.Allocator, app_version: []const u8, minimum_system_version: []const u8) []const u8 {
     const metadata = macosBundleMetadata();
     return std.fmt.allocPrint(allocator,
         \\<?xml version="1.0" encoding="UTF-8"?>
@@ -251,8 +281,33 @@ fn macosInfoPlist(allocator: std.mem.Allocator, app_version: []const u8) []const
         metadata.display_name,
         app_version,
         app_version,
-        metadata.minimum_system_version,
+        minimum_system_version,
     }) catch @panic("OOM");
+}
+
+/// One `xcrun clang -fsyntax-only` per Objective-C bridge at
+/// `macos_minimum_version`: an API newer than the minimum that is not wrapped
+/// in `@available` fails the step. Apple's clang (not `zig cc`) resolves the
+/// SDK headers exactly as Xcode does. Every other warning is silenced so the
+/// output is only availability errors.
+fn addMacosAvailabilityChecks(b: *std.Build, step: *std.Build.Step) void {
+    const min_flag = b.fmt("-mmacosx-version-min={s}", .{macosVersionString(b.allocator, macos_minimum_version)});
+    const webview_source = comptime webviewBridgeSourcePath(PlatformFeatures.forOs(.macos)).?;
+    for (macos_objective_c_sources ++ [_][]const u8{webview_source}) |source| {
+        const check = b.addSystemCommand(&.{
+            "xcrun",
+            "clang",
+            "-fsyntax-only",
+            "-x",
+            "objective-c",
+            min_flag,
+            "-Wno-everything",
+            "-Werror=unguarded-availability",
+            "-Werror=unguarded-availability-new",
+        });
+        check.addFileArg(b.path(source));
+        step.dependOn(&check.step);
+    }
 }
 
 fn supportsMacosAppTarget(os_tag: std.Target.Os.Tag, cpu_arch: std.Target.Cpu.Arch) bool {
@@ -384,7 +439,7 @@ test "fast tests link libc on hosts whose platform adapters import C headers" {
 
 test "macOS platform advertises required app frameworks" {
     const frameworks = appFrameworksFor(PlatformFeatures.forOs(.macos));
-    try std.testing.expectEqual(@as(usize, 11), frameworks.len);
+    try std.testing.expectEqual(@as(usize, 12), frameworks.len);
     try expectContainsString(frameworks, "WebKit");
     try expectContainsString(frameworks, "Metal");
     try expectContainsString(frameworks, "QuartzCore");
@@ -396,6 +451,7 @@ test "macOS platform advertises required app frameworks" {
     try expectContainsString(frameworks, "Carbon");
     try expectContainsString(frameworks, "UserNotifications");
     try expectContainsString(frameworks, "ImageIO");
+    try expectContainsString(frameworks, "Security");
 
     try std.testing.expectEqual(@as(usize, 0), appFrameworksFor(PlatformFeatures.forOs(.windows)).len);
     try std.testing.expectEqual(@as(usize, 0), appFrameworksFor(PlatformFeatures.forOs(.linux)).len);
@@ -541,7 +597,7 @@ test "macOS Info.plist renders app bundle metadata and package type" {
     try std.testing.expectEqualStrings("WispTerm", metadata.executable_name);
     try std.testing.expectEqualStrings("com.wispterm.terminal", metadata.bundle_identifier);
 
-    const plist = macosInfoPlist(std.testing.allocator, "1.2.3");
+    const plist = macosInfoPlist(std.testing.allocator, "1.2.3", "12.0");
     defer std.testing.allocator.free(plist);
 
     try expectSourceContains(plist, "CFBundlePackageType");
@@ -556,6 +612,43 @@ test "macOS Info.plist renders app bundle metadata and package type" {
     try expectSourceContains(plist, "<string>WispTerm</string>");
     try expectSourceContains(plist, "NSAppTransportSecurity");
     try expectSourceContains(plist, "NSAllowsLocalNetworking");
+    try expectSourceContains(plist, "<key>LSMinimumSystemVersion</key>\n    <string>12.0</string>");
+}
+
+test "macOS minimum version is 12.0 and spelled for LSMinimumSystemVersion" {
+    const minimum = macosVersionString(std.testing.allocator, macos_minimum_version);
+    defer std.testing.allocator.free(minimum);
+    try std.testing.expectEqualStrings("12.0", minimum);
+
+    const patched = macosVersionString(std.testing.allocator, .{ .major = 12, .minor = 0, .patch = 1 });
+    defer std.testing.allocator.free(patched);
+    try std.testing.expectEqualStrings("12.0.1", patched);
+}
+
+test "macOS targets without a version are pinned to the macOS minimum" {
+    const named = macosMinimumVersionQuery(.{ .cpu_arch = .aarch64, .os_tag = .macos }, .macos).?;
+    try std.testing.expectEqual(std.math.Order.eq, named.os_version_min.?.semver.order(macos_minimum_version));
+
+    // -Dtarget=native leaves os_tag unset; the OS is only known once resolved.
+    const native = macosMinimumVersionQuery(.{}, .macos).?;
+    try std.testing.expectEqual(std.math.Order.eq, native.os_version_min.?.semver.order(macos_minimum_version));
+
+    const explicit: std.Target.Query = .{
+        .cpu_arch = .aarch64,
+        .os_tag = .macos,
+        .os_version_min = .{ .semver = .{ .major = 14, .minor = 0, .patch = 0 } },
+    };
+    try std.testing.expect(macosMinimumVersionQuery(explicit, .macos) == null);
+    try std.testing.expect(macosMinimumVersionQuery(defaultDevelopmentTarget(), .windows) == null);
+}
+
+test "macOS minimum version checks are declared" {
+    const source = @embedFile("build.zig");
+
+    try expectSourceContains(source, "b.step(\"check-macos-minimum\"");
+    try expectSourceContains(source, "b.step(\"check-macos-availability\"");
+    try expectSourceContains(source, "-Werror=unguarded-availability-new");
+    try std.testing.expectEqualStrings("packaging/macos/check-minimum-version.sh", macosMinimumCheckScriptPath());
 }
 
 test "macOS app bundle links required native frameworks" {
@@ -589,9 +682,13 @@ fn expectContainsString(haystack: []const []const u8, needle: []const u8) !void 
 pub fn build(b: *std.Build) void {
     // Windows remains the default development target while non-Windows ports
     // are introduced behind explicit platform feature gates.
-    const target = b.standardTargetOptions(.{
+    const requested_target = b.standardTargetOptions(.{
         .default_target = defaultDevelopmentTarget(),
     });
+    const target = if (macosMinimumVersionQuery(requested_target.query, requested_target.result.os.tag)) |query|
+        b.resolveTargetQuery(query)
+    else
+        requested_target;
     const platform = PlatformFeatures.forOs(target.result.os.tag);
     const optimize = b.standardOptimizeOption(.{});
     const webview = b.option(bool, "webview", "Enable the embedded browser panel") orelse platform.supports_embedded_browser;
@@ -813,21 +910,41 @@ pub fn build(b: *std.Build) void {
     const test_macos_menu_step = b.step("test-macos-menu", "Run native macOS NSMenu smoke tests");
     const macos_app_step = b.step("macos-app", "Build and install the native macOS .app bundle");
     const macos_dist_step = b.step("macos-dist", "Build, sign, and package the native macOS .app into a DMG");
+    const check_macos_minimum_step = b.step("check-macos-minimum", "Build the .app and fail unless its binary minos and Info.plist both match the macOS minimum");
+    const check_macos_availability_step = b.step("check-macos-availability", "Fail if an Objective-C bridge calls an API newer than the macOS minimum without @available");
 
     if (platform.supports_app_bundle) {
         if (!supportsMacosAppTarget(target.result.os.tag, target.result.cpu.arch)) {
             macos_app_step.dependOn(&b.addFail("macos-app supports only aarch64-macos and x86_64-macos targets").step);
             macos_dist_step.dependOn(&b.addFail("macos-dist supports only aarch64-macos and x86_64-macos targets").step);
+            check_macos_minimum_step.dependOn(&b.addFail("check-macos-minimum supports only aarch64-macos and x86_64-macos targets").step);
         } else {
             const macos_app_install = addMacosAppBundle(b, target, optimize, app_version, platform, debug_console, gpu_backend);
             macos_app_step.dependOn(&macos_app_install.step);
             const macos_package = b.addSystemCommand(&.{ "bash", macosPackageScriptPath() });
             macos_package.step.dependOn(&macos_app_install.step);
             macos_dist_step.dependOn(&macos_package.step);
+            const check_minimum = b.addSystemCommand(&.{
+                "bash",
+                macosMinimumCheckScriptPath(),
+                b.getInstallPath(.bin, macosBundleMetadata().bundle_dir),
+                macosVersionString(b.allocator, macos_minimum_version),
+            });
+            check_minimum.step.dependOn(&macos_app_install.step);
+            check_macos_minimum_step.dependOn(&check_minimum.step);
         }
     } else {
         macos_app_step.dependOn(&b.addFail("macos-app requires -Dtarget=aarch64-macos or -Dtarget=x86_64-macos").step);
         macos_dist_step.dependOn(&b.addFail("macos-dist requires -Dtarget=aarch64-macos or -Dtarget=x86_64-macos").step);
+        check_macos_minimum_step.dependOn(&b.addFail("check-macos-minimum requires -Dtarget=aarch64-macos or -Dtarget=x86_64-macos").step);
+    }
+
+    // Target-independent: it checks sources, not a build, so it only needs a
+    // macOS host with Xcode.
+    if (b.graph.host.result.os.tag == .macos) {
+        addMacosAvailabilityChecks(b, check_macos_availability_step);
+    } else {
+        check_macos_availability_step.dependOn(&b.addFail("check-macos-availability needs a macOS host with Xcode (xcrun clang)").step);
     }
 
     // Fast inner loop: build and RUN platform-independent logic tests against
@@ -1501,7 +1618,8 @@ fn addMacosAppBundle(
     apple_sdk.addPaths(b, exe) catch @panic("failed to locate native Apple SDK for macOS app executable");
 
     const bundle = b.addWriteFiles();
-    _ = bundle.add(macosBundleInfoPlistPath(), macosInfoPlist(b.allocator, app_version));
+    const minimum_system_version = macosVersionString(b.allocator, target.result.os.version_range.semver.min);
+    _ = bundle.add(macosBundleInfoPlistPath(), macosInfoPlist(b.allocator, app_version, minimum_system_version));
     _ = bundle.add("WispTerm.app/Contents/PkgInfo", "APPL????");
     _ = bundle.add(macosBundleResourcesKeepPath(), "");
     _ = bundle.addCopyFile(exe.getEmittedBin(), macosBundleExecutablePath());

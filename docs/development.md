@@ -39,6 +39,22 @@ Requires macOS 13+ and Zig 0.15.2. The build produces a `.app` bundle at
 `zig-out/bin/WispTerm.app`. For distribution, run the packaging script
 (`packaging/macos/package.sh`) which signs and creates a `.dmg`.
 
+The app's minimum macOS is `macos_minimum_version` in `build.zig` (12.0, with
+macOS 12 best-effort). A macOS `-Dtarget` without a version is pinned to it,
+and the generated `Info.plist` `LSMinimumSystemVersion` follows the binary's
+deployment target. No hosted CI runner can launch macOS 12, so two build
+steps guard the minimum statically. CI runs both:
+
+```bash
+zig build check-macos-availability                         # Objective-C API newer than the minimum without @available
+zig build check-macos-minimum -Dtarget=aarch64-macos       # built .app: binary minos and Info.plist match the minimum
+```
+
+When a bridge needs a newer API, wrap it in `if (@available(macOS 13.0, *))`
+with a fallback. A message sent to an `id` or `__kindof` receiver (such as
+`NSApp`) can match an older method with the same name and slip past the
+check, so give the receiver its concrete type.
+
 ### Zig Toolchain
 
 Use Zig 0.15.2 and make sure `zig` (or `zig.exe` on Windows) is available on

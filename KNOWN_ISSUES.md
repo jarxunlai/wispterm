@@ -58,6 +58,12 @@ tested passes.
 
 ## macOS
 
+- **macOS 12 Monterey is best-effort.** The app is built for macOS 12.0
+  (binary minos and `LSMinimumSystemVersion`), and CI rejects any Objective-C
+  API newer than 12.0 that is not wrapped in `@available`. No hosted runner can
+  launch macOS 12, and Apple no longer patches it, so behavior on 12 is
+  untested: AppKit, WebKit, and Metal differences only show up on a real
+  machine. Ghostty supports 13.0 and later.
 - **1.40.5 and earlier leak memory on macOS (fixed in 1.40.6).** WispTerm
   does not start through `NSApplicationMain`, so no thread had an outer
   autorelease pool, and AppKit objects autoreleased outside an explicit
