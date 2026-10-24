@@ -19,6 +19,10 @@
 > [!NOTE]
 > WispTerm 提供 **Windows** 与 **macOS**（Apple Silicon 与 Intel）版本。**Linux**
 > AppImage 会作为社区测试版本发布，仍属实验性质。
+>
+> macOS 版运行于 **macOS 13 Ventura 及以上**。**macOS 12 Monterey 为尽力支持**：
+> 应用按 macOS 12 构建，CI 会拦截更新的 API，但没有 CI runner 能启动 macOS 12，
+> 因此未在 macOS 12 上测试。
 
 ## 功能特性
 
@@ -75,7 +79,7 @@ zig build -Doptimize=ReleaseFast  # 用于分发的 ReleaseFast 构建
 Remove-Item -Recurse -Force .\zig-out, .\.zig-cache -ErrorAction SilentlyContinue
 ```
 
-macOS（需要 macOS 13+ 与 Zig 0.15.2）：
+macOS（构建需要 macOS 13+ 与 Zig 0.15.2；构建出的应用也可在 macOS 12 上运行，属尽力支持）：
 
 ```bash
 zig build macos-app -Dtarget=aarch64-macos   # Apple Silicon 的 .app 包（Intel 用 x86_64-macos）

@@ -20,6 +20,10 @@ English | [简体中文](README.zh-CN.md)
 > WispTerm ships for **Windows** and **macOS** (Apple Silicon and Intel). A
 > **Linux** AppImage is published for community testing and remains
 > experimental.
+>
+> The macOS app runs on **macOS 13 Ventura or later**. **macOS 12 Monterey is
+> best-effort**: the app is built for it and CI rejects newer APIs, but no CI
+> runner can launch macOS 12, so it is not tested there.
 
 ## Features
 
@@ -89,7 +93,7 @@ zig build -Doptimize=ReleaseFast  # ReleaseFast build for distribution
 Remove-Item -Recurse -Force .\zig-out, .\.zig-cache -ErrorAction SilentlyContinue
 ```
 
-macOS (requires macOS 13+ and Zig 0.15.2):
+macOS (building requires macOS 13+ and Zig 0.15.2; the built app also runs on macOS 12, best-effort):
 
 ```bash
 zig build macos-app -Dtarget=aarch64-macos   # Apple Silicon .app bundle (use x86_64-macos on Intel)
