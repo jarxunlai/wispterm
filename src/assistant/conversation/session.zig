@@ -3878,6 +3878,18 @@ pub const Session = struct {
         self.suggestion_selected = 0;
     }
 
+    /// Place the caret at `offset` (clamped to a UTF-8 boundary), e.g. from a
+    /// mouse click in the composer.
+    pub fn setInputCursor(self: *Session, offset: usize) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.clearSelectionLocked();
+        self.composer.cursor = offset;
+        self.clampInputCursorLocked();
+        self.input_scroll_follow_cursor = true;
+        self.suggestion_selected = 0;
+    }
+
     fn moveInputCursorVertical(self: *Session, max_cols_raw: usize, delta: i32) void {
         self.mutex.lock();
         defer self.mutex.unlock();
