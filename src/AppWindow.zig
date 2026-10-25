@@ -269,7 +269,7 @@ pub fn init(allocator: std.mem.Allocator, app: *App) !AppWindow {
 
     // Apply config from App to globals
     g_theme = app.theme;
-    g_force_rebuild = true;
+    applyUiEffect(.{ .needs_rebuild = true });
     g_cursor_style = app.cursor_style;
     g_cursor_blink = app.cursor_blink;
     overlays.g_debug_fps = app.debug_fps;
@@ -5939,6 +5939,7 @@ fn renderResizeFrame(width: i32, height: i32) void {
     overlays.renderRestoreDefaultsConfirm(@floatFromInt(fb_width), @floatFromInt(fb_height));
     overlays.renderIntegrationPrompt(@floatFromInt(fb_width), @floatFromInt(fb_height));
     overlays.renderWhatsNew(@floatFromInt(fb_width), @floatFromInt(fb_height));
+    titlebar.renderTextHint();
 
     d3d11_offscreen_smoke.render(fb_width, fb_height);
     d3d11_ui_smoke.render(fb_width, fb_height);
@@ -9045,6 +9046,7 @@ fn runMainLoop(self: *AppWindow) !void {
         overlays.renderRestoreDefaultsConfirm(@floatFromInt(fb_width), @floatFromInt(fb_height));
         overlays.renderIntegrationPrompt(@floatFromInt(fb_width), @floatFromInt(fb_height));
         overlays.renderWhatsNew(@floatFromInt(fb_width), @floatFromInt(fb_height));
+        titlebar.renderTextHint();
         renderImePreedit(win, fb_width, fb_height);
 
         d3d11_offscreen_smoke.render(fb_width, fb_height);

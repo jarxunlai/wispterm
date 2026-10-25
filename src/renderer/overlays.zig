@@ -1892,7 +1892,7 @@ fn findAgentHistoryRowBySessionId(session_id: []const u8) ?usize {
 }
 
 fn windowCloseConfirmLayout(window_width: f32, window_height: f32) WindowCloseConfirmLayout {
-    const panel_w = @round(@min(@max(620.0, window_width - 128.0), 860.0));
+    const panel_w = ui_patterns.modalWidth(window_width, 620, window_width - 128, 860, 24);
     const panel_h = @round(@max(250.0, overlayTextHeight() * 4.0 + 132.0));
     const panel_x = @round(@max(24.0, (window_width - panel_w) / 2.0));
     const panel_top_px = @round(@max(48.0, (window_height - panel_h) / 2.0));
@@ -1925,7 +1925,7 @@ const INTEGRATION_PROMPT_COPY_LABEL = "Copy Prompt";
 const INTEGRATION_PROMPT_CLOSE_LABEL = "Close";
 
 fn integrationPromptLayout(window_width: f32, window_height: f32) WindowCloseConfirmLayout {
-    const panel_w = @round(@min(@max(360.0, window_width - 96.0), 960.0));
+    const panel_w = ui_patterns.modalWidth(window_width, 360, window_width - 96, 960, 24);
     const desired_h = @min(@max(360.0, window_height - 96.0), 560.0);
     const panel_h = @round(@min(desired_h, @max(220.0, window_height - 48.0)));
     const panel_x = @round(@max(24.0, (window_width - panel_w) / 2.0));
@@ -1956,7 +1956,7 @@ fn integrationPromptLayout(window_width: f32, window_height: f32) WindowCloseCon
 }
 
 fn transferCancelConfirmLayout(window_width: f32, window_height: f32) TransferCancelConfirmLayout {
-    const panel_w = @round(@min(440.0, @max(320.0, window_width - 48.0)));
+    const panel_w = ui_patterns.modalWidth(window_width, 320, window_width - 48, 440, 24);
     const panel_h: f32 = 152;
     const panel_x = @round((window_width - panel_w) / 2);
     const bottom_margin: f32 = 96;
@@ -2006,8 +2006,7 @@ fn measureTitlebarText(text: []const u8) f32 {
 }
 
 fn renderSettingsTextLimited(text: []const u8, x: f32, y: f32, color: [3]f32, max_width: f32) f32 {
-    renderTitlebarTextLimited(text, x, y, color, max_width);
-    return @min(max_width, measureTitlebarText(text));
+    return titlebar.renderTextLimited(text, @round(x), @round(y), color, @max(0, max_width));
 }
 
 fn renderTitlebarText(text: []const u8, x_start: f32, y: f32, color: [3]f32) void {
@@ -2036,37 +2035,21 @@ fn renderTitlebarTextStrong(text: []const u8, x_start: f32, y: f32, color: [3]f3
 }
 
 fn renderTitlebarTextLimited(text: []const u8, x_start: f32, y: f32, color: [3]f32, max_w: f32) void {
-    if (max_w <= 0) return;
+    const x = @round(x_start);
+    _ = titlebar.renderTextLimited(text, x, @round(y), color, @max(0, x_start + max_w - x));
+}
 
-    var x = @round(x_start);
-    const y_aligned = @round(y);
-    var view = std.unicode.Utf8View.init(text) catch {
-        // Malformed UTF-8: best-effort byte render (no codepoint truncation).
-        renderTitlebarText(text, x, y_aligned, color);
-        return;
-    };
-    var it = view.iterator();
-    var drew_any = false;
-    while (it.nextCodepoint()) |cp| {
-        const advance = titlebar.titlebarGlyphAdvance(cp);
-        if (x + advance > x_start + max_w) {
-            const ellipsis_w = titlebar.titlebarGlyphAdvance('.') * 3;
-            if (drew_any and x + ellipsis_w <= x_start + max_w) {
-                renderTitlebarText("...", x, y_aligned, color);
-            }
-            return;
-        }
-        titlebar.renderTitlebarChar(cp, x, y_aligned, color);
-        x += advance;
-        drew_any = true;
-    }
+fn renderTextColumns(left: []const u8, right: []const u8, x: f32, right_edge: f32, y: f32, left_color: [3]f32, right_color: [3]f32) void {
+    const columns = ui_patterns.textColumns(right_edge - x, measureTitlebarText(left), measureTitlebarText(right), 18);
+    renderTitlebarTextLimited(left, x, y, left_color, columns.left_w);
+    renderTitlebarTextLimited(right, x + columns.right_x, y, right_color, columns.right_w);
 }
 
 fn renderTitlebarTextStrongLimited(text: []const u8, x_start: f32, y: f32, color: [3]f32, max_w: f32) void {
     if (max_w <= 0) return;
     const x = @round(x_start);
     const y_aligned = @round(y);
-    renderTitlebarTextLimited(text, x, y_aligned, color, max_w);
+    renderTitlebarTextLimited(text, x, y_aligned, color, max_w - 1);
     renderTitlebarTextLimited(text, x + 1, y_aligned, color, max_w - 1);
 }
 
@@ -2076,6 +2059,7 @@ const copilot_picker = @import("../assistant/sidebar/picker.zig");
 /// Render the multi-server Jupyter picker overlay.
 pub fn renderJupyterPicker(window_width: f32, window_height: f32) void {
     const fade = autoFade(.jupyter_picker, jupyter_picker.isVisible()) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
     const n = jupyter_picker.count();
@@ -2146,6 +2130,7 @@ pub fn renderJupyterPicker(window_width: f32, window_height: f32) void {
 /// Render the Copilot conversation picker overlay (mirror of renderJupyterPicker).
 pub fn renderCopilotPicker(window_width: f32, window_height: f32) void {
     const fade = autoFade(.copilot_picker, copilot_picker.isVisible()) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
     const total = copilot_picker.rowCount(); // conversations + "+ New" row
@@ -2462,6 +2447,7 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
         fade = 1.0 - animProgress(now_ms - g_overlay_anim.palette_closing_at_ms, PALETTE_FADE_OUT_MS);
     }
 
+    titlebar.clearTextHint();
     var layout = commandPaletteLayout(window_width, window_height, top_offset);
     layout.box_top_px += slide;
     layout.row_top_px += slide;
@@ -2498,8 +2484,8 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
         const open_label = i18n.s().cmd_palette_open_conversation_center;
         const open_w = measureTitlebarText(open_label);
         const toolbar = command_palette_layout.historyToolbar(layout.box_x, layout.box_w, pad_x, open_w, chip_w, 16);
-        renderTitlebarText(open_label, toolbar.open_x, filter_text_y, mixColor(fg, accent, 0.42));
-        renderTitlebarText(chip, toolbar.source_x, filter_text_y, mixColor(fg, accent, 0.20));
+        renderTitlebarTextLimited(open_label, toolbar.open_x, filter_text_y, mixColor(fg, accent, 0.42), toolbar.open_w);
+        renderTitlebarTextLimited(chip, toolbar.source_x, filter_text_y, mixColor(fg, accent, 0.20), toolbar.source_w);
         filter_text_w = toolbar.filter_w;
     }
     const filter = commandPaletteFilter();
@@ -2516,7 +2502,7 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
         if (history_view == null or selectable == 0) {
             const empty_text = i18n.s().cmd_palette_no_sessions;
             const empty_y = command_palette_layout.emptyTextY(layout, window_height, text_h);
-            renderTitlebarText(empty_text, layout.box_x + (layout.box_w - measureTitlebarText(empty_text)) / 2, empty_y, muted);
+            renderTitlebarTextLimited(empty_text, layout.box_x + @max(pad_x, (layout.box_w - measureTitlebarText(empty_text)) / 2), empty_y, muted, layout.box_w - pad_x * 2);
         } else {
             const view = history_view.?;
             const selected_ord = @min(commandPaletteState().history_selected, selectable - 1);
@@ -2537,7 +2523,7 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
                 switch (view.items[item_idx]) {
                     .header => |b| {
                         const label = historyBucketLabel(b);
-                        renderTitlebarText(label, @round(layout.box_x + pad_x + 2), text_y, mixColor(bg, fg, 0.40));
+                        renderTitlebarTextLimited(label, @round(layout.box_x + pad_x + 2), text_y, mixColor(bg, fg, 0.40), layout.box_w - pad_x * 2 - 2);
                     },
                     .row => |ord| {
                         const row = g_command_palette_history_rows[view.filtered[ord]];
@@ -2549,17 +2535,10 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
 
                         var tbuf: [32]u8 = undefined;
                         const rel = copilot_picker.formatRelativeTime(now_ms, row.updated_at, &tbuf);
-                        const rel_w = measureTitlebarText(rel);
-                        renderTitlebarText(rel, meta_right - rel_w, text_y, meta_color);
-
+                        const rel_w = @min(measureTitlebarText(rel), @max(0, (meta_right - title_x) * 0.25));
+                        renderTitlebarTextLimited(rel, meta_right - rel_w, text_y, meta_color, rel_w);
                         const tag = if (row.copilot) i18n.s().cmd_palette_sidebar_tag else row.model;
-                        var title_limit_right = meta_right - rel_w - 14;
-                        if (tag.len > 0) {
-                            const tag_w = measureTitlebarText(tag);
-                            renderTitlebarText(tag, title_limit_right - tag_w, text_y, meta_color);
-                            title_limit_right = title_limit_right - tag_w - 14;
-                        }
-                        renderTitlebarTextLimited(row.title, title_x, text_y, row_title_color, title_limit_right - title_x);
+                        renderTextColumns(row.title, tag, title_x, meta_right - rel_w - 14, text_y, row_title_color, meta_color);
                     },
                 }
             }
@@ -2569,7 +2548,7 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
         if (g_palette_scratch_len == 0) {
             const empty_text = "No matching results";
             const empty_y = command_palette_layout.emptyTextY(layout, window_height, text_h);
-            renderTitlebarText(empty_text, layout.box_x + (layout.box_w - measureTitlebarText(empty_text)) / 2, empty_y, muted);
+            renderTitlebarTextLimited(empty_text, layout.box_x + @max(pad_x, (layout.box_w - measureTitlebarText(empty_text)) / 2), empty_y, muted, layout.box_w - pad_x * 2);
         } else {
             const first_row = commandPaletteFirstVisibleIndex(layout.rendered_rows);
             const sel_idx = commandPaletteState().selected;
@@ -2596,23 +2575,14 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
                         const entry = COMMAND_ENTRIES[cmd_idx];
                         var shortcut_buf: [64]u8 = undefined;
                         const shortcut = commandEntryShortcut(entry, &shortcut_buf);
-                        var shortcut_left = layout.box_x + layout.box_w - pad_x;
-                        if (shortcut.len > 0) {
-                            const shortcut_w = measureTitlebarText(shortcut);
-                            shortcut_left = @round(layout.box_x + layout.box_w - pad_x - shortcut_w);
-                            renderTitlebarText(shortcut, shortcut_left, text_y, shortcut_color);
-                        }
-                        renderTitlebarTextLimited(i18n.commandTitle(entry.action) orelse entry.title, title_x, text_y, row_title_color, shortcut_left - title_x - 18);
+                        renderTextColumns(i18n.commandTitle(entry.action) orelse entry.title, shortcut, title_x, layout.box_x + layout.box_w - pad_x, text_y, row_title_color, shortcut_color);
                     },
                     .snippet => |snippet_idx| {
                         const snippet_items = snippetsState().items;
                         if (snippet_idx >= snippet_items.len) continue;
                         const snippet = snippet_items[snippet_idx];
                         const suffix = "  send";
-                        const suffix_w = measureTitlebarText(suffix);
-                        const suffix_right = layout.box_x + layout.box_w - pad_x;
-                        renderTitlebarText(suffix, suffix_right - suffix_w, text_y, shortcut_color);
-                        renderTitlebarTextLimited(snippet.name, title_x, text_y, row_title_color, (suffix_right - suffix_w) - title_x - 18);
+                        renderTextColumns(snippet.name, suffix, title_x, layout.box_x + layout.box_w - pad_x, text_y, row_title_color, shortcut_color);
                     },
                     .recipe => |recipe_idx| {
                         const recipe_items = recipe_ui.recipeItems();
@@ -2620,10 +2590,7 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
                         var title_buf: [recipe_store.NAME_MAX + 8]u8 = undefined;
                         const recipe_title = std.fmt.bufPrint(title_buf[0..], "Recipe: {s}", .{recipe_items[recipe_idx].name}) catch "Recipe";
                         const suffix = "  new window";
-                        const suffix_w = measureTitlebarText(suffix);
-                        const suffix_right = layout.box_x + layout.box_w - pad_x;
-                        renderTitlebarText(suffix, suffix_right - suffix_w, text_y, shortcut_color);
-                        renderTitlebarTextLimited(recipe_title, title_x, text_y, row_title_color, (suffix_right - suffix_w) - title_x - 18);
+                        renderTextColumns(recipe_title, suffix, title_x, layout.box_x + layout.box_w - pad_x, text_y, row_title_color, shortcut_color);
                     },
                     .password => |pw_idx| {
                         const pw_items = credential_store.paletteItems();
@@ -2631,10 +2598,7 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
                         var title_buf: [160]u8 = undefined;
                         const pw_title = std.fmt.bufPrint(title_buf[0..], "Password: {s}", .{pw_items[pw_idx].name}) catch "Password";
                         const suffix = "  copy";
-                        const suffix_w = measureTitlebarText(suffix);
-                        const suffix_right = layout.box_x + layout.box_w - pad_x;
-                        renderTitlebarText(suffix, suffix_right - suffix_w, text_y, shortcut_color);
-                        renderTitlebarTextLimited(pw_title, title_x, text_y, row_title_color, (suffix_right - suffix_w) - title_x - 18);
+                        renderTextColumns(pw_title, suffix, title_x, layout.box_x + layout.box_w - pad_x, text_y, row_title_color, shortcut_color);
                     },
                     .ssh_profile => |profile_idx| {
                         if (profile_idx >= sshState().profile_count) continue;
@@ -2642,12 +2606,8 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
                         var title_buf: [SSH_FIELD_MAX + 5]u8 = undefined;
                         const ssh_title = std.fmt.bufPrint(title_buf[0..], "SSH: {s}", .{profileField(profile, .name)}) catch "SSH";
                         var target_buf: [SSH_FIELD_MAX * 2]u8 = undefined;
-                        const target = sshProfileTarget(profile, target_buf[0..]);
-                        const target_w = measureTitlebarText(target);
-                        const target_max_w = @min(target_w, @max(80.0, layout.box_w * 0.40));
-                        const target_left = @round(layout.box_x + layout.box_w - pad_x - target_max_w);
-                        renderTitlebarTextLimited(target, target_left, text_y, shortcut_color, target_max_w);
-                        renderTitlebarTextLimited(ssh_title, title_x, text_y, row_title_color, @max(1.0, target_left - title_x - 18));
+                        const target = sshProfileTarget(profile, &target_buf);
+                        renderTextColumns(ssh_title, target, title_x, layout.box_x + layout.box_w - pad_x, text_y, row_title_color, shortcut_color);
                     },
                     .tmux_profile => |profile_idx| {
                         if (profile_idx >= sshState().profile_count) continue;
@@ -2656,11 +2616,7 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
                         const tmux_title = std.fmt.bufPrint(title_buf[0..], "tmux: {s}", .{profileField(profile, .name)}) catch "tmux";
                         var target_buf: [SSH_FIELD_MAX * 2]u8 = undefined;
                         const target = sshProfileTarget(profile, target_buf[0..]);
-                        const target_w = measureTitlebarText(target);
-                        const target_max_w = @min(target_w, @max(80.0, layout.box_w * 0.40));
-                        const target_left = @round(layout.box_x + layout.box_w - pad_x - target_max_w);
-                        renderTitlebarTextLimited(target, target_left, text_y, shortcut_color, target_max_w);
-                        renderTitlebarTextLimited(tmux_title, title_x, text_y, row_title_color, @max(1.0, target_left - title_x - 18));
+                        renderTextColumns(tmux_title, target, title_x, layout.box_x + layout.box_w - pad_x, text_y, row_title_color, shortcut_color);
                     },
                     .ai_profile => |profile_idx| {
                         if (profile_idx >= assistantProfiles().profile_count) continue;
@@ -2673,18 +2629,12 @@ pub fn renderCommandPalette(window_width: f32, window_height: f32, top_offset: f
                             (std.fmt.bufPrint(tag_buf[0..], "{s} (default)", .{mode}) catch mode)
                         else
                             mode;
-                        const tag_w = measureTitlebarText(tag);
-                        const tag_left = @round(layout.box_x + layout.box_w - pad_x - tag_w);
-                        renderTitlebarText(tag, tag_left, text_y, shortcut_color);
-                        renderTitlebarTextLimited(ai_title, title_x, text_y, row_title_color, @max(1.0, tag_left - title_x - 18));
+                        renderTextColumns(ai_title, tag, title_x, layout.box_x + layout.box_w - pad_x, text_y, row_title_color, shortcut_color);
                     },
                     .theme => |ti| {
                         const name = themes_embed.entries[ti].name;
                         const suffix = "  theme";
-                        const suffix_w = measureTitlebarText(suffix);
-                        const shortcut_right = layout.box_x + layout.box_w - pad_x;
-                        renderTitlebarText(suffix, shortcut_right - suffix_w, text_y, shortcut_color);
-                        renderTitlebarTextLimited(name, title_x, text_y, row_title_color, (shortcut_right - suffix_w) - title_x - 18);
+                        renderTextColumns(name, suffix, title_x, layout.box_x + layout.box_w - pad_x, text_y, row_title_color, shortcut_color);
                     },
                 }
             }
@@ -2804,7 +2754,6 @@ const SessionLayout = struct {
 };
 
 pub threadlocal var g_session_launcher_visible: bool = false;
-threadlocal var g_session_launcher_selected: usize = 0;
 threadlocal var g_session_launcher_return_to_command_palette: bool = false;
 threadlocal var g_ssh_list_visible: bool = false;
 threadlocal var g_ssh_form_visible: bool = false;
@@ -2900,7 +2849,7 @@ fn commandCenterStateSnapshot() command_center_state.State {
         .command_palette_history_source = palette.history_source,
         .startup_shortcuts_visible = startup_shortcuts.g_startup_shortcuts_visible,
         .session_launcher_visible = g_session_launcher_visible,
-        .session_launcher_selected = g_session_launcher_selected,
+        .session_launcher_selected = launcherState().selected,
         .session_launcher_return_to_command_palette = g_session_launcher_return_to_command_palette,
         .ssh_list_visible = g_ssh_list_visible,
         .ssh_form_visible = g_ssh_form_visible,
@@ -2929,7 +2878,7 @@ fn commandCenterStateApply(state: command_center_state.State) void {
     palette.history_source = state.command_palette_history_source;
     startup_shortcuts.g_startup_shortcuts_visible = state.startup_shortcuts_visible;
     g_session_launcher_visible = state.session_launcher_visible;
-    g_session_launcher_selected = state.session_launcher_selected;
+    launcherState().selected = state.session_launcher_selected;
     g_session_launcher_return_to_command_palette = state.session_launcher_return_to_command_palette;
     g_ssh_list_visible = state.ssh_list_visible;
     g_ssh_form_visible = state.ssh_form_visible;
@@ -3407,30 +3356,30 @@ fn sessionLauncherHandleKeyImpl(ev: input_key.KeyEvent) void {
             return;
         }
         switch (ev.key) {
-            .arrow_down, .tab => g_session_launcher_selected = (g_session_launcher_selected + 1) % platform_pty_command.sessionLauncherRowCount(),
-            .arrow_up => g_session_launcher_selected = if (g_session_launcher_selected == 0) platform_pty_command.sessionLauncherRowCount() - 1 else g_session_launcher_selected - 1,
-            .enter => runSessionLauncherRow(g_session_launcher_selected),
+            .arrow_down, .tab => launcherState().selected = (launcherState().selected + 1) % platform_pty_command.sessionLauncherRowCount(),
+            .arrow_up => launcherState().selected = if (launcherState().selected == 0) platform_pty_command.sessionLauncherRowCount() - 1 else launcherState().selected - 1,
+            .enter => runSessionLauncherRow(launcherState().selected),
             .key_p => {
-                g_session_launcher_selected = 0;
-                runSessionLauncherRow(g_session_launcher_selected);
+                launcherState().selected = 0;
+                runSessionLauncherRow(launcherState().selected);
             },
             .key_s => {
-                g_session_launcher_selected = 1;
-                runSessionLauncherRow(g_session_launcher_selected);
+                launcherState().selected = 1;
+                runSessionLauncherRow(launcherState().selected);
             },
             .key_w => {
                 if (platform_pty_command.sessionLauncherWslRow()) |wsl_row| {
-                    g_session_launcher_selected = wsl_row;
-                    runSessionLauncherRow(g_session_launcher_selected);
+                    launcherState().selected = wsl_row;
+                    runSessionLauncherRow(launcherState().selected);
                 }
             },
             .key_a => {
-                g_session_launcher_selected = platform_pty_command.sessionLauncherAiAgentRow();
-                runSessionLauncherRow(g_session_launcher_selected);
+                launcherState().selected = platform_pty_command.sessionLauncherAiAgentRow();
+                runSessionLauncherRow(launcherState().selected);
             },
             .key_h => {
-                g_session_launcher_selected = platform_pty_command.sessionLauncherAiHistoryRow();
-                runSessionLauncherRow(g_session_launcher_selected);
+                launcherState().selected = platform_pty_command.sessionLauncherAiHistoryRow();
+                runSessionLauncherRow(launcherState().selected);
             },
             else => {},
         }
@@ -6089,7 +6038,7 @@ fn sessionActiveSelection() usize {
     else if (g_ssh_list_visible)
         sshState().list_selected
     else
-        g_session_launcher_selected;
+        launcherState().selected;
 }
 
 /// Mutable pointer to the active mode's selection (for the mouse wheel).
@@ -6111,7 +6060,7 @@ fn sessionActiveSelectionPtr() *usize {
     else if (g_ssh_list_visible)
         &sshState().list_selected
     else
-        &g_session_launcher_selected;
+        &launcherState().selected;
 }
 
 /// Rows that fit within the box for the given window height. Mirrors
@@ -6238,7 +6187,7 @@ fn sessionHitTest(xpos: f64, ypos: f64, window_width: f32, window_height: f32, t
 
     if (!g_ssh_form_visible and !g_ai_form_visible) {
         const action = sessionLauncherActionForRow(row) orelse return null;
-        g_session_launcher_selected = row;
+        launcherState().selected = row;
         return action;
     }
 
@@ -6291,8 +6240,8 @@ fn renderSessionRow(layout: SessionLayout, window_height: f32, row: usize, left:
     if (right.len > 0) {
         const right_w = measureTitlebarText(right);
         const right_color = if (selected) mixColor(fg, accent, 0.08) else mixColor(bg, fg, 0.56);
-        const right_max_w = @max(0.0, right_edge - left_x - 96);
-        const right_draw_w = @min(right_w, right_max_w);
+        const columns = ui_patterns.textColumns(right_edge - left_x, measureTitlebarText(left) + 1, right_w + 1, 18);
+        const right_draw_w = columns.right_w;
         const right_x = @round(right_edge - right_draw_w);
         renderTitlebarTextStrongLimited(left, left_x, text_y, left_color, right_x - left_x - 18);
         renderTitlebarTextStrongLimited(right, right_x, text_y, right_color, right_draw_w);
@@ -6467,6 +6416,7 @@ fn renderFeishuConfigForm(layout: SessionLayout, window_height: f32) void {
 
 pub fn renderSessionLauncher(window_width: f32, window_height: f32, top_offset: f32) void {
     const fade = autoFade(.session_launcher, sessionLauncherVisible()) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
 
@@ -6512,7 +6462,7 @@ pub fn renderSessionLauncher(window_width: f32, window_height: f32, top_offset: 
     const hint = sessionLauncherHint();
     const title_y = textYFromTop(window_height, layout.box_top_px + 18);
     const hint_y = textYFromTop(window_height, layout.box_top_px + 18 + overlayLineHeight());
-    renderTitlebarTextStrong(title, layout.box_x + 24, title_y, title_color);
+    renderTitlebarTextStrongLimited(title, layout.box_x + 24, title_y, title_color, layout.box_w - 48);
     renderTitlebarTextStrongLimited(hint, layout.box_x + 24, hint_y, muted_color, layout.box_w - 48);
 
     if (g_ssh_list_visible and layout.filter_h > 0) {
@@ -6622,22 +6572,22 @@ pub fn renderSessionLauncher(window_width: f32, window_height: f32, top_offset: 
             return;
         }
         var row: usize = 0;
-        renderSessionRow(layout, window_height, row, AppWindow.configuredLocalShellSessionTitle(), AppWindow.configuredLocalShellSessionDetail(), g_session_launcher_selected == row);
+        renderSessionRow(layout, window_height, row, AppWindow.configuredLocalShellSessionTitle(), AppWindow.configuredLocalShellSessionDetail(), launcherState().selected == row);
         row += 1;
-        renderSessionRow(layout, window_height, row, "SSH", i18n.s().sl_v_connect_server, g_session_launcher_selected == row);
+        renderSessionRow(layout, window_height, row, "SSH", i18n.s().sl_v_connect_server, launcherState().selected == row);
         row += 1;
-        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherTmuxRow(), "tmux", "Alive session", g_session_launcher_selected == platform_pty_command.sessionLauncherTmuxRow());
+        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherTmuxRow(), "tmux", "Alive session", launcherState().selected == platform_pty_command.sessionLauncherTmuxRow());
         row += 1;
         if (platform_pty_command.sessionLauncherWslRow()) |wsl_row| {
             row = wsl_row;
-            renderSessionRow(layout, window_height, row, "WSL", platform_pty_command.wslLauncherDetail(), g_session_launcher_selected == row);
+            renderSessionRow(layout, window_height, row, "WSL", platform_pty_command.wslLauncherDetail(), launcherState().selected == row);
             row += 1;
         }
-        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherAiAgentRow(), i18n.s().sl_ai_agent, defaultAiModeLabel(), g_session_launcher_selected == platform_pty_command.sessionLauncherAiAgentRow());
-        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherAiHistoryRow(), i18n.s().sl_sessions, i18n.s().sl_sessions_detail, g_session_launcher_selected == platform_pty_command.sessionLauncherAiHistoryRow());
-        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherPortForwardRow(), i18n.s().pf_title, i18n.s().pf_detail, g_session_launcher_selected == platform_pty_command.sessionLauncherPortForwardRow());
-        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherMemoryCenterRow(), i18n.s().memory_center_title, i18n.s().sl_memory_detail, g_session_launcher_selected == platform_pty_command.sessionLauncherMemoryCenterRow());
-        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherSettingsRow(), i18n.s().settings_title, i18n.s().sl_settings_detail, g_session_launcher_selected == platform_pty_command.sessionLauncherSettingsRow());
+        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherAiAgentRow(), i18n.s().sl_ai_agent, defaultAiModeLabel(), launcherState().selected == platform_pty_command.sessionLauncherAiAgentRow());
+        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherAiHistoryRow(), i18n.s().sl_sessions, i18n.s().sl_sessions_detail, launcherState().selected == platform_pty_command.sessionLauncherAiHistoryRow());
+        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherPortForwardRow(), i18n.s().pf_title, i18n.s().pf_detail, launcherState().selected == platform_pty_command.sessionLauncherPortForwardRow());
+        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherMemoryCenterRow(), i18n.s().memory_center_title, i18n.s().sl_memory_detail, launcherState().selected == platform_pty_command.sessionLauncherMemoryCenterRow());
+        renderSessionRow(layout, window_height, platform_pty_command.sessionLauncherSettingsRow(), i18n.s().settings_title, i18n.s().sl_settings_detail, launcherState().selected == platform_pty_command.sessionLauncherSettingsRow());
         return;
     }
 
@@ -6703,7 +6653,7 @@ const McpLayout = struct {
 
 fn mcpLayout(window_width: f32, window_height: f32, top_offset: f32, row_count: usize, selected: usize, with_filter: bool) McpLayout {
     const content_height = @max(1, window_height - top_offset);
-    const box_w: f32 = @round(@min(@max(420.0, window_width - 48.0), 860.0));
+    const box_w: f32 = ui_patterns.modalWidth(window_width, 420, window_width - 48, 860, 24);
     const row_h = overlayRowHeight(38);
     const header_h = @round(18 + overlayLineHeight() * 2 + 12);
     const filter_h: f32 = if (with_filter) row_h else 0;
@@ -6753,8 +6703,8 @@ fn renderMcpRow(layout: McpLayout, window_height: f32, row: usize, left: []const
     if (right.len > 0) {
         const right_w = measureTitlebarText(right);
         const right_color = if (selected) mixColor(fg, accent, 0.08) else mixColor(bg, fg, 0.56);
-        const right_max_w = @max(0.0, right_edge - left_x - 96);
-        const right_draw_w = @min(right_w, right_max_w);
+        const columns = ui_patterns.textColumns(right_edge - left_x, measureTitlebarText(left) + 1, right_w + 1, 18);
+        const right_draw_w = columns.right_w;
         const right_x = @round(right_edge - right_draw_w);
         renderTitlebarTextStrongLimited(left, left_x, text_y, left_color, right_x - left_x - 18);
         renderTitlebarTextStrongLimited(right, right_x, text_y, right_color, right_draw_w);
@@ -6951,6 +6901,7 @@ fn renderMcpFormView(window_width: f32, window_height: f32, top_offset: f32) voi
 
 pub fn renderMcpServers(window_width: f32, window_height: f32, top_offset: f32) void {
     const fade = autoFade(.mcp_servers, mcpServersVisible()) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
     const st = mcpState();
@@ -8101,21 +8052,21 @@ test "overlays: session launcher mouse wheel moves selection without wrapping" {
     const count = platform_pty_command.sessionLauncherRowCount();
     try std.testing.expect(count >= 2);
 
-    g_session_launcher_selected = 0;
+    launcherState().selected = 0;
     sessionLauncherHandleScroll(-1);
-    try std.testing.expectEqual(@as(usize, 1), g_session_launcher_selected);
+    try std.testing.expectEqual(@as(usize, 1), launcherState().selected);
 
     sessionLauncherHandleScroll(1);
-    try std.testing.expectEqual(@as(usize, 0), g_session_launcher_selected);
+    try std.testing.expectEqual(@as(usize, 0), launcherState().selected);
 
     // At the top, scrolling up does not wrap.
     sessionLauncherHandleScroll(1);
-    try std.testing.expectEqual(@as(usize, 0), g_session_launcher_selected);
+    try std.testing.expectEqual(@as(usize, 0), launcherState().selected);
 
     // At the bottom, scrolling down does not wrap.
-    g_session_launcher_selected = count - 1;
+    launcherState().selected = count - 1;
     sessionLauncherHandleScroll(-1);
-    try std.testing.expectEqual(count - 1, g_session_launcher_selected);
+    try std.testing.expectEqual(count - 1, launcherState().selected);
 }
 
 test "overlays: short-window overlay boxes stay within the window" {
@@ -8586,6 +8537,7 @@ pub fn showCloseShortcutConfirm(duration_ms: i64) void {
 
 pub fn renderWindowCloseConfirm(window_width: f32, window_height: f32) void {
     const fade = autoFade(.window_close_confirm, windowCloseConfirmVisible()) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
 
@@ -8662,6 +8614,7 @@ pub fn renderWindowCloseConfirm(window_width: f32, window_height: f32) void {
 
 pub fn renderRestoreDefaultsConfirm(window_width: f32, window_height: f32) void {
     const fade = autoFade(.restore_defaults_confirm, restoreDefaultsConfirmVisible()) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
 
@@ -8782,6 +8735,7 @@ fn integrationPromptClampedScroll(total_lines: usize, visible_rows: usize) usize
 
 pub fn renderIntegrationPrompt(window_width: f32, window_height: f32) void {
     const fade = autoFade(.integration_prompt, integrationPromptState().visible) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
 
@@ -8885,6 +8839,7 @@ pub fn renderIntegrationPrompt(window_width: f32, window_height: f32) void {
 
 pub fn renderTransferCancelConfirm(window_width: f32, window_height: f32) void {
     const fade = autoFade(.transfer_cancel_confirm, transferCancelConfirmVisible()) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
 
@@ -9334,6 +9289,7 @@ fn renderWhatsNewBody(
 
 pub fn renderWhatsNew(window_width: f32, window_height: f32) void {
     const fade = autoFade(.whats_new, whatsNewState().visible) orelse return;
+    titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
 

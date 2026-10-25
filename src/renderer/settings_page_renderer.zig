@@ -99,7 +99,7 @@ fn renderRow(draw: DrawContext, category: settings_page.Category, layout: settin
     if (row.value.len > 0) {
         const kind = controlKind(row.id);
         const control_h = if (kind == .toggle) 24.0 else @round(@max(32.0, draw.cell_h + 10.0));
-        const pill_y = visible.gl_y + @round((layout.row_h - control_h) / 2);
+        const pill_y = title_y - @round((control_h - draw.cell_h) / 2);
         const value_color = if (selected) draw.accent else mixColor(draw.bg, draw.fg, 0.82);
         if (kind == .adjuster) {
             const adjuster = layout.font_adjuster;
@@ -125,17 +125,18 @@ fn renderRow(draw: DrawContext, category: settings_page.Category, layout: settin
                 .toggle => 12,
                 .adjuster => unreachable,
             };
-            const value_w = if (kind == .toggle) 46.0 else @min(max_value_w, @max(min_value_w, draw.measureText(row.value) + 24 + trailing_w));
+            const desired_w = if (kind == .toggle) 46.0 else @min(max_value_w, @max(min_value_w, draw.measureText(row.value) + 24 + trailing_w));
+            const value_w = ui_patterns.textColumns(right_edge - title_x, draw.measureText(rowTitle(row.id)), desired_w, 18).right_w;
             const value_x = @round(right_edge - value_w);
             const is_on = std.mem.eql(u8, row.value, i18n.s().settings_value_on);
             if (kind == .toggle) {
                 draw.roundedQuadAlpha(value_x, pill_y, value_w, control_h, control_h / 2, if (is_on) mixColor(draw.bg, draw.accent, 0.40) else mixColor(draw.bg, draw.fg, 0.18), 0.96);
-                const knob_d = control_h - 6;
+                const knob_d = @min(control_h - 6, @max(0, value_w - 6));
                 const knob_x = if (is_on) value_x + value_w - knob_d - 3 else value_x + 3;
                 draw.roundedQuadAlpha(knob_x, pill_y + 3, knob_d, knob_d, knob_d / 2, if (is_on) draw.accent else mixColor(draw.bg, draw.fg, 0.42), 0.96);
             } else {
                 _ = draw.renderTextLimited(row.value, value_x, rowTextY(draw, pill_y, control_h), value_color, value_w - trailing_w);
-                if (kind == .choice or kind == .action) _ = draw.renderTextLimited(">", value_x + value_w - 12, rowTextY(draw, pill_y, control_h), mixColor(draw.bg, draw.fg, 0.60), 12);
+                if (kind == .choice or kind == .action) _ = draw.renderTextLimited(">", value_x + @max(0, value_w - 12), rowTextY(draw, pill_y, control_h), mixColor(draw.bg, draw.fg, 0.60), @min(12, value_w));
             }
             title_max_w = @max(1.0, value_x - title_x - 18);
         }
@@ -143,7 +144,7 @@ fn renderRow(draw: DrawContext, category: settings_page.Category, layout: settin
 
     if (visible.visible_index > 0) draw.fillQuadAlpha(x + 18, visible.gl_y + layout.row_h - 1, w - 36, 1, mixColor(draw.bg, draw.fg, 0.14), 0.62);
     _ = draw.renderTextLimited(rowTitle(row.id), title_x, title_y, if (selected) mixColor(draw.fg, draw.accent, 0.16) else draw.fg, title_max_w);
-    _ = draw.renderTextLimited(rowDescription(category, row.id), title_x, detail_y, mixColor(draw.bg, draw.fg, 0.56), title_max_w);
+    _ = draw.renderTextLimited(rowDescription(category, row.id), title_x, detail_y, mixColor(draw.bg, draw.fg, 0.56), @max(0, right_edge - title_x));
 }
 
 fn renderCentered(draw: DrawContext, text: []const u8, slot: settings_page_layout.HorizontalSlot, y: f32, h: f32, color: [3]f32) void {
@@ -175,7 +176,6 @@ fn renderPickerRow(draw: DrawContext, layout: settings_page_layout.Layout, windo
     }
     if (visible.visible_index > 0) draw.fillQuadAlpha(layout.content_x + 18, visible.gl_y + layout.row_h - 1, layout.content_w - 36, 1, mixColor(draw.bg, draw.fg, 0.14), 0.62);
     const text_y = rowTextY(draw, visible.gl_y, layout.row_h);
-    _ = draw.renderTextLimited(label, layout.content_x + 20, text_y, if (selected) mixColor(draw.fg, draw.accent, 0.16) else draw.fg, layout.content_w - 170);
     const zh = i18n.lang() == .zh_CN;
     const tag: []const u8 = if (current and is_default)
         (if (zh) "当前 · 默认" else "Current · Default")
@@ -185,7 +185,9 @@ fn renderPickerRow(draw: DrawContext, layout: settings_page_layout.Layout, windo
         (if (zh) "默认" else "Default")
     else
         "";
-    if (tag.len > 0) _ = draw.renderTextLimited(tag, layout.content_x + layout.content_w - 150, text_y, if (current) draw.accent else mixColor(draw.bg, draw.fg, 0.60), 132);
+    const columns = ui_patterns.textColumns(layout.content_w - 38, draw.measureText(label), draw.measureText(tag), 18);
+    _ = draw.renderTextLimited(label, layout.content_x + 20, text_y, if (selected) mixColor(draw.fg, draw.accent, 0.16) else draw.fg, columns.left_w);
+    if (tag.len > 0) _ = draw.renderTextLimited(tag, layout.content_x + 20 + columns.right_x, text_y, if (current) draw.accent else mixColor(draw.bg, draw.fg, 0.60), columns.right_w);
 }
 
 fn renderScrollbar(draw: DrawContext, layout: settings_page_layout.Layout, window_height: f32, item_count: usize) void {
@@ -220,7 +222,7 @@ fn renderFooter(draw: DrawContext, layout: settings_page_layout.Layout, window_h
         (if (zh) "输入 host:port  ·  Enter 保存  ·  Esc 取消  ·  清空则使用系统代理" else "Type host:port  ·  Enter save  ·  Esc cancel  ·  empty uses the system proxy")
     else
         i18n.s().settings_workbench_footer;
-    _ = draw.renderTextLimited(text, layout.content_x, rowTextY(draw, footer_y, footer_h), muted, layout.content_w);
+    _ = draw.renderTextLimited(text, layout.page_x + 24, rowTextY(draw, footer_y, footer_h), muted, layout.page_w - 48);
 }
 
 const ControlKind = enum { adjuster, toggle, choice, action };
@@ -334,4 +336,62 @@ fn rowTextY(draw: DrawContext, y: f32, h: f32) f32 {
 
 fn mixColor(a: [3]f32, b: [3]f32, t: f32) [3]f32 {
     return .{ a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t };
+}
+
+test "long setting values stay in the row and leave descriptions their own line" {
+    const Probe = struct {
+        var left: f32 = 0;
+        var right: f32 = 0;
+        var description_width: f32 = 0;
+        var out_of_bounds: bool = false;
+        fn quad(_: f32, _: f32, _: f32, _: f32, _: [3]f32, _: f32) void {}
+        fn rounded(_: f32, _: f32, _: f32, _: f32, _: f32, _: [3]f32, _: f32) void {}
+        fn measure(value: []const u8) f32 {
+            var view = std.unicode.Utf8View.init(value) catch unreachable;
+            var it = view.iterator();
+            var w: f32 = 0;
+            while (it.nextCodepoint()) |cp| w += if (cp < 128) @as(f32, 10) else 20;
+            return w;
+        }
+        fn text(s: []const u8, x: f32, _: f32, _: [3]f32, max_w: f32) f32 {
+            if (max_w > 0 and (x < left or x + max_w > right + 0.01)) out_of_bounds = true;
+            if (std.mem.eql(u8, s, rowDescription(.general, settings_page.SETTINGS_CONTROL_ROW_START + 3))) description_width = max_w;
+            return x + @min(@max(0, max_w), measure(s));
+        }
+    };
+    const previous_lang = i18n.lang();
+    defer i18n.setLang(previous_lang);
+    i18n.setLang(.zh_CN);
+    const draw = DrawContext{
+        .bg = .{ 0, 0, 0 },
+        .fg = .{ 1, 1, 1 },
+        .accent = .{ 1, 1, 0 },
+        .cell_h = 20,
+        .fillQuadAlpha = Probe.quad,
+        .roundedQuadAlpha = Probe.rounded,
+        .renderTextLimited = Probe.text,
+        .measureText = Probe.measure,
+    };
+    for ([_]f32{ 380, 580, 1000 }) |width| {
+        const l = settings_page_layout.compute(.{
+            .window_height = 600,
+            .top_offset = 34,
+            .content_x = 220,
+            .content_width = width,
+            .cell_height = 20,
+            .focus_index = 0,
+            .row_count = 1,
+            .category_count = 3,
+        });
+        Probe.left = l.content_x;
+        Probe.right = l.content_x + l.content_w;
+        Probe.out_of_bounds = false;
+        Probe.description_width = 0;
+        renderRow(draw, .general, l, 600, .{
+            .id = settings_page.SETTINGS_CONTROL_ROW_START + 3,
+            .value = "系统默认 (/a/very/long/path/to/a/custom-shell)",
+        }, 0, true);
+        try std.testing.expect(!Probe.out_of_bounds);
+        try std.testing.expectApproxEqAbs(l.content_w - 38, Probe.description_width, 0.01);
+    }
 }
