@@ -1809,12 +1809,14 @@ fn getCaptionButtonWidth() i32 {
 }
 
 /// Total width of the app-handled titlebar buttons immediately left of the
-/// native caption buttons: Copilot + help + settings (each 46px). This strip is
-/// carved out of the draggable caption region (WM_NCHITTEST / WM_LBUTTONDOWN) so
-/// their clicks reach the app instead of starting a window drag. Keep in sync
-/// with titlebar.zig's TITLEBAR_COPILOT_W + TITLEBAR_HELP_W + TITLEBAR_CONFIG_W.
+/// native caption buttons: command center + Copilot + help + settings (each
+/// 46px). This strip is carved out of the draggable caption region
+/// (WM_NCHITTEST / WM_LBUTTONDOWN) so their clicks reach the app instead of
+/// starting a window drag. Keep in sync
+/// with titlebar.zig's TITLEBAR_PALETTE_W + TITLEBAR_COPILOT_W + TITLEBAR_HELP_W
+/// + TITLEBAR_CONFIG_W.
 fn getAppButtonStripWidth() i32 {
-    return 46 * 3;
+    return 46 * 4;
 }
 
 fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.winapi) LRESULT {

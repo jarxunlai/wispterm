@@ -286,6 +286,7 @@ pub const TopBarLayout = struct {
     config_x: f32,
     help_x: f32,
     copilot_x: f32,
+    palette_x: f32,
     title_text_x: f32,
     title_text_max_w: f32,
 };
@@ -390,6 +391,7 @@ pub fn topBarLayout(
     config_w: f32,
     help_w: f32,
     copilot_w: f32,
+    palette_w: f32,
     caption_button_w: f32,
 ) TopBarLayout {
     const caption_area_w = caption_button_w * 3.0;
@@ -398,6 +400,7 @@ pub fn topBarLayout(
     const config_x = caption_start_x - config_w;
     const help_x = config_x - help_w;
     const copilot_x = help_x - copilot_w;
+    const palette_x = copilot_x - palette_w;
     const title_text_x = left_reserved + toggle_w + 10.0;
     return .{
         .top_y = window_height - titlebar_h,
@@ -408,8 +411,9 @@ pub fn topBarLayout(
         .config_x = config_x,
         .help_x = help_x,
         .copilot_x = copilot_x,
+        .palette_x = palette_x,
         .title_text_x = title_text_x,
-        .title_text_max_w = @max(0.0, copilot_x - title_text_x - 12.0),
+        .title_text_max_w = @max(0.0, palette_x - title_text_x - 12.0),
     };
 }
 
@@ -594,7 +598,7 @@ test "fallbackCodepoint maps printable ASCII, else '?'" {
 }
 
 test "topBarLayout computes titlebar chrome rectangles" {
-    const l = topBarLayout(1200, 800, 34, 0, 46, 46, 46, 46, 46);
+    const l = topBarLayout(1200, 800, 34, 0, 46, 46, 46, 46, 46, 46);
 
     try std.testing.expectEqual(@as(f32, 766), l.top_y);
     try std.testing.expectEqual(@as(f32, 0), l.toggle_x);
@@ -606,12 +610,13 @@ test "topBarLayout computes titlebar chrome rectangles" {
     try std.testing.expectEqual(@as(f32, 1016), l.config_x);
     try std.testing.expectEqual(@as(f32, 970), l.help_x);
     try std.testing.expectEqual(@as(f32, 924), l.copilot_x);
+    try std.testing.expectEqual(@as(f32, 878), l.palette_x);
     try std.testing.expectEqual(@as(f32, 56), l.title_text_x);
-    try std.testing.expectEqual(@as(f32, 856), l.title_text_max_w);
+    try std.testing.expectEqual(@as(f32, 810), l.title_text_max_w);
 }
 
 test "topBarLayout collapses optional titlebar controls cleanly" {
-    const l = topBarLayout(360, 240, 40, 160, 46, 0, 0, 0, 46);
+    const l = topBarLayout(360, 240, 40, 160, 46, 0, 0, 0, 0, 46);
 
     try std.testing.expectEqual(@as(f32, 200), l.top_y);
     try std.testing.expectEqual(@as(f32, 160), l.toggle_x);
@@ -621,6 +626,7 @@ test "topBarLayout collapses optional titlebar controls cleanly" {
     try std.testing.expectEqual(@as(f32, 222), l.config_x);
     try std.testing.expectEqual(@as(f32, 222), l.help_x);
     try std.testing.expectEqual(@as(f32, 222), l.copilot_x);
+    try std.testing.expectEqual(@as(f32, 222), l.palette_x);
     try std.testing.expectEqual(@as(f32, 216), l.title_text_x);
     try std.testing.expectEqual(@as(f32, 0), l.title_text_max_w);
 }

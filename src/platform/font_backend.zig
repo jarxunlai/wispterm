@@ -46,6 +46,7 @@ pub const TitlebarIcon = enum {
     settings,
     help,
     copilot,
+    command_palette,
 };
 
 pub fn discoveryDisplayName() []const u8 {
@@ -128,6 +129,7 @@ test "platform font backend owns titlebar icon glyph mapping" {
     try std.testing.expect(titlebarIconGlyph(.settings) != 0);
     try std.testing.expect(titlebarIconGlyph(.help) != 0);
     try std.testing.expect(titlebarIconGlyph(.copilot) != 0);
+    try std.testing.expect(titlebarIconGlyph(.command_palette) != 0);
 }
 
 test "platform font backend selects backend by target OS" {

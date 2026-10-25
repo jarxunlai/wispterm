@@ -31,6 +31,7 @@ pub fn titlebarIconGlyph(icon: anytype) u32 {
         .settings => '*',
         .help => '?',
         .copilot => '@',
+        .command_palette => '>',
     };
 }
 
