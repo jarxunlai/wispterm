@@ -237,6 +237,7 @@ const SIZE_MAXIMIZED: UINT = 2;
 
 const CFS_POINT: DWORD = 0x0002;
 const CFS_CANDIDATEPOS: DWORD = 0x0040;
+const CFS_EXCLUDE: DWORD = 0x0080;
 const GCS_COMPSTR: DWORD = 0x0008;
 const GCS_RESULTSTR: DWORD = 0x0800;
 const ISC_SHOWUICOMPOSITIONWINDOW: usize = 0x80000000;
@@ -2399,7 +2400,43 @@ fn updateImeWindowPosition(w: *Window) void {
     };
     _ = ImmSetCandidateWindow(hIMC, &candidate);
 
+    // WispTerm hides the IME's own composition window and draws the preedit
+    // inline, so some IMEs (Windows 11 Microsoft Pinyin) ignore the point
+    // above and drop the candidate list right on the caret row, covering the
+    // text. CFS_EXCLUDE hands them the caret cell rectangle to keep clear of.
+    var exclude = CANDIDATEFORM{
+        .dwIndex = 0,
+        .dwStyle = CFS_EXCLUDE,
+        .ptCurrentPos = .{ .x = x, .y = y },
+        .rcArea = imeCandidateExcludeArea(x, y, h, w.width),
+    };
+    _ = ImmSetCandidateWindow(hIMC, &exclude);
+
     w.ime_window_sync = currentImeWindowSync(w);
+}
+
+/// Caret cell rectangle the IME candidate window must not overlap. The cell
+/// width is unknown here; a full-width CJK glyph is about one cell height
+/// wide, which is enough to push the list below (or above) the text row.
+fn imeCandidateExcludeArea(x: i32, y: i32, h: i32, client_width: i32) RECT {
+    return .{
+        .left = x,
+        .top = y,
+        .right = @min(@max(x + 1, client_width), x + h),
+        .bottom = y + h,
+    };
+}
+
+test "win32 IME candidate exclude area covers the caret cell" {
+    const area = imeCandidateExcludeArea(100, 200, 20, 800);
+    try std.testing.expectEqual(@as(i32, 100), area.left);
+    try std.testing.expectEqual(@as(i32, 200), area.top);
+    try std.testing.expectEqual(@as(i32, 120), area.right);
+    try std.testing.expectEqual(@as(i32, 220), area.bottom);
+
+    // Caret at the right edge: never extend past the client area.
+    const edge = imeCandidateExcludeArea(799, 200, 20, 800);
+    try std.testing.expectEqual(@as(i32, 800), edge.right);
 }
 
 fn handleDropFiles(wParam: WPARAM, w: *Window) void {
