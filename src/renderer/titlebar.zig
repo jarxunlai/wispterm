@@ -5,6 +5,7 @@
 //! GPU backend. Depends on font module for glyph loading and tab module for state.
 
 const std = @import("std");
+const text_hint = @import("text_hint.zig");
 const builtin = @import("builtin");
 const titlebar_layout = @import("titlebar_layout.zig");
 const chrome_icons = @import("chrome_icons.zig");
@@ -197,6 +198,7 @@ fn renderFallbackBytesLimited(text: []const u8, x: f32, y: f32, color: [3]f32, m
         return full_x;
     }
 
+    text_hint.current.offer(text, x, y, max_w, font.g_titlebar_cell_height);
     var cursor_x = x;
     const ellipsis: u32 = 0x2026;
     const ellipsis_w = titlebarGlyphAdvance(ellipsis);
@@ -261,6 +263,7 @@ pub fn renderTextLimited(text: []const u8, x: f32, y: f32, color: [3]f32, max_w:
         return cursor_x;
     }
 
+    text_hint.current.offer(text, x, y, max_w, font.g_titlebar_cell_height);
     const ellipsis: u32 = 0x2026;
     const ellipsis_w = titlebarGlyphAdvance(ellipsis);
     while (it.nextCodepoint()) |cp| {
@@ -274,6 +277,34 @@ pub fn renderTextLimited(text: []const u8, x: f32, y: f32, color: [3]f32, max_w:
         cursor_x += ellipsis_w;
     }
     return cursor_x;
+}
+
+/// Blocking overlays discard hints collected from content behind their scrim.
+pub fn clearTextHint() void {
+    text_hint.current.clear();
+}
+
+/// Render after all pages/overlays so the full label is readable on hover.
+pub fn renderTextHint() void {
+    const state = &text_hint.current;
+    defer state.clear();
+    const layout = text_hint.layout(state, font.g_titlebar_cell_height, titlebarGlyphAdvance) orelse return;
+    const bg = AppWindow.g_theme.background;
+    const fg = AppWindow.g_theme.foreground;
+    ui_pipeline.fillQuad(layout.x - 1, layout.y - 1, layout.w + 2, layout.h + 2, blend(bg, fg, 0.3));
+    ui_pipeline.fillQuad(layout.x, layout.y, layout.w, layout.h, blend(bg, fg, 0.08));
+    ui_pipeline.beginClip(.{ .x = layout.x, .y = layout.y, .w = layout.w, .h = layout.h });
+    defer ui_pipeline.endClip();
+    for (layout.lines[0..layout.count], 0..) |line, row| {
+        const y = layout.y + layout.h - 8 - font.g_titlebar_cell_height - @as(f32, @floatFromInt(row)) * layout.line_h;
+        var view = std.unicode.Utf8View.init(state.text[line.start..line.end]) catch continue;
+        var it = view.iterator();
+        var x = layout.x + 12;
+        while (it.nextCodepoint()) |cp| {
+            renderTitlebarChar(cp, x, y, fg);
+            x += titlebarGlyphAdvance(cp);
+        }
+    }
 }
 
 fn renderChromeIcon(kind: chrome_icons.Kind, x: f32, y: f32, w: f32, h: f32, color: [3]f32) void {
@@ -417,6 +448,8 @@ pub fn renderIconGlyph(ch: Character, btn_x: f32, btn_y: f32, btn_w: f32, btn_h:
 ///
 /// OpenGL Y=0 is BOTTOM, so titlebar top = window_height - titlebar_h.
 pub fn renderTitlebar(window_width: f32, window_height: f32, titlebar_h: f32) void {
+    const win = AppWindow.g_window;
+    text_hint.current.begin(window_width, window_height, if (win) |w| @floatFromInt(w.mouse_x) else -1, if (win) |w| window_height - @as(f32, @floatFromInt(w.mouse_y)) else -1);
     if (titlebar_h <= 0) return;
     // The ui_pipeline helpers are self-contained: each binds its own program and
     // vertex state per draw.

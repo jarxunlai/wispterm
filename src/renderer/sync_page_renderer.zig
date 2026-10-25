@@ -139,7 +139,7 @@ fn renderRow(draw: DrawContext, state: *const page.State, view: View, layout: se
 
     const kind = page.rowKind(row);
     const control_h = if (kind == .toggle) 24.0 else @round(@max(32.0, draw.cell_h + 10.0));
-    const pill_y = visible.gl_y + @round((layout.row_h - control_h) / 2);
+    const pill_y = textYFromTop(draw, window_height, visible.top_px + 10) - @round((control_h - draw.cell_h) / 2);
     var title_max_w = w - 40;
     if (kind == .toggle) {
         const on = state.settings().kindEnabled(page.toggleKind(row));
@@ -154,7 +154,8 @@ fn renderRow(draw: DrawContext, state: *const page.State, view: View, layout: se
         var value_buf: [512]u8 = undefined;
         const value = rowValue(state, view, row, editing, &value_buf);
         const max_value_w: f32 = if (kind == .text or kind == .info) @max(180.0, w * 0.50) else 240;
-        const value_w = @min(max_value_w, @max(96.0, measure(draw, value) + 24));
+        const desired_w = @min(max_value_w, @max(96.0, measure(draw, value) + 24));
+        const value_w = ui_patterns.textColumns(right_edge - title_x, measure(draw, rowTitle(row)), desired_w, 18).right_w;
         const value_x = @round(right_edge - value_w);
         const danger = row == .forget and state.confirm_forget;
         const value_color = if (danger) dangerColor() else if (selected or editing) draw.accent else mixColor(draw.bg, draw.fg, 0.82);
@@ -164,7 +165,7 @@ fn renderRow(draw: DrawContext, state: *const page.State, view: View, layout: se
 
     if (visible.visible_index > 0) draw.fillQuadAlpha(x + 18, visible.gl_y + layout.row_h - 1, w - 36, 1, mixColor(draw.bg, draw.fg, 0.14), 0.62);
     _ = draw.renderTextLimited(rowTitle(row), title_x, textYFromTop(draw, window_height, visible.top_px + 10), if (selected) mixColor(draw.fg, draw.accent, 0.16) else draw.fg, title_max_w);
-    _ = draw.renderTextLimited(rowDescription(row, state.settings().target), title_x, textYFromTop(draw, window_height, visible.top_px + 10 + lineHeight(draw)), mixColor(draw.bg, draw.fg, 0.56), title_max_w);
+    _ = draw.renderTextLimited(rowDescription(row, state.settings().target), title_x, textYFromTop(draw, window_height, visible.top_px + 10 + lineHeight(draw)), mixColor(draw.bg, draw.fg, 0.56), @max(0, right_edge - title_x));
 }
 
 const BULLETS = "••••••••";
@@ -358,8 +359,8 @@ fn renderFooter(draw: DrawContext, state: *const page.State, view: View, layout:
     draw.fillQuadAlpha(layout.page_x, footer_y, layout.page_w, footer_h, mixColor(draw.bg, draw.fg, 0.030), 0.98);
     draw.fillQuadAlpha(layout.page_x, footer_y + footer_h - 1, layout.page_w, 1, border, 0.68);
     const text_y = rowTextY(draw, footer_y, footer_h);
-    var x = layout.content_x;
-    const right = layout.content_x + layout.content_w;
+    var x = layout.page_x + 24;
+    const right = layout.page_x + layout.page_w - 24;
     var buf: [256]u8 = undefined;
     // Page-local feedback first; otherwise the worker's last problem.
     const status = statusText(state.status);
@@ -370,7 +371,7 @@ fn renderFooter(draw: DrawContext, state: *const page.State, view: View, layout:
     else
         .{ "", false };
     if (shown.len > 0) {
-        _ = draw.renderTextLimited(shown, x, text_y, if (is_error) dangerColor() else draw.accent, layout.content_w);
+        _ = draw.renderTextLimited(shown, x, text_y, if (is_error) dangerColor() else draw.accent, @max(0, right - x));
         x = @min(right, x + measure(draw, shown) + 24);
     }
     _ = draw.renderTextLimited(hintText(state), x, text_y, muted, @max(0.0, right - x));

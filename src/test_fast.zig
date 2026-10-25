@@ -270,8 +270,10 @@ test {
     _ = @import("renderer/overlays/command_palette_layout.zig");
     _ = @import("renderer/overlays/btw_conversation.zig");
     _ = @import("renderer/ui_patterns.zig");
+    _ = @import("renderer/text_hint.zig");
     _ = @import("renderer/overlays/startup_shortcuts_layout.zig");
     _ = @import("renderer/overlays/settings_page_layout.zig");
+    _ = @import("renderer/settings_page_renderer.zig");
     _ = @import("renderer/overlays/settings_page.zig");
     _ = @import("renderer/overlays/settings_picker.zig");
     _ = @import("memory_digest/source_selection.zig");

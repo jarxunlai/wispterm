@@ -4,6 +4,7 @@ const types = @import("../../terminal_agents/sessions/types.zig");
 const i18n = @import("../../i18n.zig");
 const text_search = @import("../../text_search.zig");
 const panel_draw = @import("../panel_draw.zig");
+const ui_patterns = @import("../ui_patterns.zig");
 
 const HEADER_H: f32 = 54;
 const FILTER_H: f32 = 42;
@@ -174,7 +175,7 @@ fn rowTextLayout(cell_h: f32) RowTextLayout {
 pub fn listVisibleCapacity(window_height: f32, titlebar_offset: f32, cell_h: f32) usize {
     const top = @round(titlebar_offset);
     const content_h = @round(@max(1.0, window_height - top));
-    const visible_h = @max(0, content_h - filterHeight(cell_h));
+    const visible_h = @max(0, content_h - filterHeight(cell_h) - ui_patterns.workbenchFooterHeight(cell_h));
     return @intFromFloat(@max(0, @floor(visible_h / rowHeight(cell_h))));
 }
 
@@ -197,6 +198,7 @@ pub fn interactionHitTest(
     const layout = computeLayout(content_x, content_w);
     const mx: f32 = @floatCast(mouse_x);
     const my: f32 = @floatCast(mouse_y);
+    if (my >= window_height - ui_patterns.workbenchFooterHeight(cell_h)) return .none;
 
     const lc = leftColumnLayout(top, cell_h);
     for (types.CATEGORY_ORDER, 0..) |cat, i| {
@@ -298,6 +300,11 @@ pub fn render(
     renderLeftColumn(draw, session, layout, window_height, top, content_h, fg, muted, accent, panel_strong, line);
     renderList(draw, session, layout, window_height, top, content_h, fg, muted, accent, selected_bg, line);
     renderDetail(draw, session, layout, window_height, top, content_h, fg, muted, accent, panel_strong, line);
+    const footer_h = ui_patterns.workbenchFooterHeight(draw.cell_h);
+    draw.fillQuad(content_x, 0, content_w, footer_h, panel);
+    draw.fillQuad(content_x, footer_h - 1, content_w, 1, line);
+    const footer = if (i18n.lang() == .zh_CN) "Enter 继续会话  ·  空格 预览" else "Enter resumes  ·  Space previews";
+    _ = draw.renderTextLimited(footer, content_x + PAD_X, (footer_h - draw.cell_h) / 2, muted, content_w - PAD_X * 2);
 }
 
 fn drawDateRow(
@@ -415,8 +422,6 @@ fn renderLeftColumn(
         }
     }
 
-    const footer = "Enter resumes  Space previews";
-    _ = draw.renderTextLimited(footer, layout.left_x + PAD_X, 12, muted, layout.left_w - PAD_X * 2);
     _ = content_h;
 }
 
@@ -696,7 +701,7 @@ fn renderTranscriptMessages(
     var drew_any = false;
     for (messages) |msg| {
         if (vis_index >= scroll_lines) {
-            if (top_px + line_h > window_height) return;
+            if (top_px + line_h > window_height - ui_patterns.workbenchFooterHeight(draw.cell_h)) return;
             const role_color = if (msg.role == .assistant) accent else muted;
             _ = draw.renderTextLimited(roleLabel(msg.role), text_x, yTextFromTop(draw, window_height, top_px), role_color, content_w);
             top_px += line_h;
@@ -707,7 +712,7 @@ fn renderTranscriptMessages(
         var it = LineWrap{ .text = msg.content, .max_w = wrap_w, .advance = draw.glyphAdvance };
         while (it.next()) |line| {
             if (vis_index >= scroll_lines) {
-                if (top_px + line_h > window_height) return;
+                if (top_px + line_h > window_height - ui_patterns.workbenchFooterHeight(draw.cell_h)) return;
                 _ = draw.renderTextLimited(line, text_x + indent, yTextFromTop(draw, window_height, top_px), fg, wrap_w);
                 top_px += line_h;
                 drew_any = true;
@@ -861,7 +866,7 @@ fn detailActionHit(layout: Layout, top: f32, cell_h: f32, glyph_w: f32, mx: f32,
 /// How many DATE rows (including the pinned "All dates" row) fit between
 /// `date_rows_top` and the bottom of the left column, reserving the footer.
 pub fn dateVisibleCapacity(window_height: f32, date_rows_top: f32, cell_h: f32) usize {
-    const footer_reserve = cell_h + 20; // bottom "Enter resumes  Space previews"
+    const footer_reserve = ui_patterns.workbenchFooterHeight(cell_h);
     const bottom_limit = window_height - footer_reserve;
     if (bottom_limit <= date_rows_top) return 0;
     const row_h = cell_h + 10; // == leftColumnLayout(...).date_row_h
