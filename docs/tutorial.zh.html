@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WispTerm 使用教程 — 从第一次连接到日常工作</title>
-  <meta name="description" content="WispTerm 中文上手教程：配置模型 API、登录 SSH 服务器、使用 Copilot 与对话中心、管理长期记忆和摘要、设置端口转发，以及文件预览、技能和日常终端操作。">
+  <meta name="description" content="WispTerm 中文上手教程：通过实机截图学习新建与编辑 LLM 提供方、配置模型 API、登录 SSH 服务器、使用 Copilot 与对话中心、管理记忆、端口转发和文件预览。">
   <meta property="og:title" content="WispTerm 中文使用教程">
   <meta property="og:description" content="一步步配置 AI、连接服务器、找回对话、管理记忆，让终端成为日常工作台。">
   <meta property="og:image" content="assets/wispterm.png">
@@ -13,7 +13,7 @@
   <link rel="icon" href="assets/favicon.ico">
   <script src="theme.js?v=2"></script>
   <link rel="stylesheet" href="style.css?v=11">
-  <link rel="stylesheet" href="tutorial.css?v=2">
+  <link rel="stylesheet" href="tutorial.css?v=3">
 </head>
 <body class="tutorial-page">
   <a class="skip-link" href="#guide-content">跳到教程正文</a>
@@ -37,7 +37,7 @@
       <p class="guide-nav-title">使用教程 <span>中文</span></p>
       <nav aria-label="章节导航">
         <a href="#start"><span>01</span>认识工作台</a>
-        <a href="#api"><span>02</span>配置模型 API</a>
+        <a href="#api"><span>02</span>新建与编辑 LLM</a>
         <a href="#subscriptions"><span>03</span>订阅登录</a>
         <a href="#ssh"><span>04</span>登录服务器</a>
         <a href="#copilot"><span>05</span>与 Copilot 协作</a>
@@ -57,7 +57,7 @@
         <p class="eyebrow">WISPTERM / 使用指南</p>
         <h1>从第一次连接，<br>到每天的工作。</h1>
         <p class="guide-lead">在一个终端里连接服务器、使用 AI、找回对话和积累记忆。按顺序完成首次配置，也可以从左侧目录直接找到需要的功能。</p>
-        <p class="guide-photo-note">配图均为 Windows 实机截图，使用演示服务器与示例记录。点击图片可查看原图。</p>
+        <p class="guide-photo-note">配图为 WispTerm 实机截图：LLM 新建与编辑步骤使用 macOS，其余截图使用 Windows 演示环境。点击图片可查看原图。</p>
         <div class="guide-routes" aria-label="推荐阅读路线">
           <a href="#api"><strong>先用 AI</strong><span>配置 API → 开始对话 → 保存记忆</span></a>
           <a href="#ssh"><strong>先连服务器</strong><span>SSH 登录 → 端口转发 → 查看文件</span></a>
@@ -81,9 +81,10 @@
       </section>
 
       <section id="api" class="guide-section">
-        <p class="guide-number">02 / 首次配置</p>
-        <h2>配置模型 API</h2>
-        <p>AI 配置把服务地址、密钥和模型保存成一个可重复使用的组合。你可以保存多个配置，在对话中切换。</p>
+        <p class="guide-number">02 / 模型配置</p>
+        <h2>新建与编辑 LLM 提供方</h2>
+        <p>界面中的「LLM 提供方」就是一份 AI 配置，把服务地址、密钥和模型保存成一个可重复使用的组合。你可以为不同服务或模型分别新建配置，也可以修改已有配置。</p>
+        <p>直接跳到：<a href="#llm-new">新建 LLM</a> · <a href="#llm-fields">字段怎么填</a> · <a href="#llm-edit">编辑已有 LLM</a>。</p>
         <h3>最快的方式：配置 DeepSeek</h3>
         <ol class="guide-steps">
           <li>前往 <a href="https://platform.deepseek.com">DeepSeek 开放平台</a>创建 API Key，并确认账号有可用额度。</li>
@@ -91,21 +92,38 @@
           <li>粘贴密钥并选择<strong>校验并保存</strong>。验证成功后，WispTerm 会保存一个 DeepSeek Flash 配置（模型 <code>deepseek-flash</code>，开启视觉），同时用作主模型和子代理。</li>
           <li>打开<strong>新建会话 → 副驾（Copilot）</strong>，发送“你好，请介绍一下你能帮我完成哪些终端任务”。能收到回复就表示基本连接成功。</li>
         </ol>
-        <h3>使用其他服务或自定义模型</h3>
-        <p>在命令中心选择<strong>管理 AI 配置</strong>（Manage AI Profiles），或进入<strong>设置 → AI 配置</strong>，新建或编辑配置。</p>
+        <h3 id="llm-manage">先打开「管理 AI 配置」</h3>
+        <p>按 <kbd>Ctrl+Shift+P</kbd>（macOS 为 <kbd>Cmd+Shift+P</kbd>）打开命令中心，选择<strong>管理 AI 配置</strong>（Manage AI Profiles），按 <kbd>Enter</kbd> 进入。也可以从<strong>设置 → AI 配置</strong>进入。</p>
         <figure class="guide-shot guide-shot--form">
-          <a href="assets/tutorial/api-profile.png" target="_blank" rel="noopener" aria-label="查看 API 配置截图原图"><img src="assets/tutorial/api-profile.png" alt="副驾配置表单中的接口地址、API 密钥、模型、智能体和协议字段，演示中密钥留空" width="520" height="790" loading="lazy" decoding="async"></a>
-          <figcaption>自定义 AI 配置。图中 API 密钥留空；实际使用时填写自己的密钥。</figcaption>
+          <a href="assets/tutorial/llm-manage-command-macos.jpg" target="_blank" rel="noopener" aria-label="查看管理 AI 配置入口截图原图"><img src="assets/tutorial/llm-manage-command-macos.jpg" alt="macOS 命令中心，已选中管理 AI 配置" width="680" height="600" loading="lazy" decoding="async"></a>
+          <figcaption>共同入口：在命令中心选择「管理 AI 配置」，打开 LLM 提供方列表。</figcaption>
         </figure>
+        <h3 id="llm-new">新建一个 LLM 提供方</h3>
+        <ol class="guide-steps">
+          <li>在 LLM 提供方列表中选择<strong>新建 LLM 提供方</strong>，按 <kbd>Enter</kbd>。已有配置会显示在这些管理操作上方。</li>
+          <li>打开的表单标题为「副驾」。填写<strong>配置名称</strong>，例如「日常助手」，方便以后从列表中辨认。</li>
+          <li>按服务商文档选择<strong>协议</strong>，再核对<strong>接口地址</strong>、<strong>模型</strong>并填写自己的 <strong>API 密钥</strong>。切换协议可能带入默认地址和模型，因此应在切换后检查这两项。</li>
+          <li>按 <kbd>Tab</kbd> 或 <kbd>↑</kbd> <kbd>↓</kbd> 在各行移动；选中「协议」后用 <kbd>←</kbd> <kbd>→</kbd> 切换。订阅登录方式见下一节<a href="#subscriptions">订阅登录</a>。</li>
+          <li>只想存好备用，选择<strong>保存</strong>；要立即试用，选择<strong>保存并打开</strong>，再发送一条「你好」检查连接。</li>
+        </ol>
+        <figure class="guide-shot guide-shot--form">
+          <a href="assets/tutorial/llm-new-entry-macos.jpg" target="_blank" rel="noopener" aria-label="查看新建 LLM 提供方入口截图原图"><img src="assets/tutorial/llm-new-entry-macos.jpg" alt="LLM 提供方列表中选中新建 LLM 提供方，上方显示已有配置" width="680" height="600" loading="lazy" decoding="async"></a>
+          <figcaption>新建入口：选择「新建 LLM 提供方」。上方的 Opencode 是已有配置的名称。</figcaption>
+        </figure>
+        <figure class="guide-shot">
+          <a href="assets/tutorial/llm-new-form-macos.jpg" target="_blank" rel="noopener" aria-label="查看新建 LLM 配置表单截图原图"><img src="assets/tutorial/llm-new-form-macos.jpg" alt="新建副驾配置表单，包含配置名称、接口地址、API 密钥、模型、协议，以及底部的保存并打开、保存和返回" width="1100" height="920" loading="lazy" decoding="async"></a>
+          <figcaption>新建表单（macOS）：API 密钥留空。预填地址、模型和默认值可能随版本变化，实际使用时按服务商提供的信息填写。</figcaption>
+        </figure>
+        <h3 id="llm-fields">配置字段怎么填</h3>
         <div class="guide-table" role="region" aria-label="AI 配置字段" tabindex="0"><table>
           <thead><tr><th scope="col">字段</th><th scope="col">怎么填</th></tr></thead>
           <tbody>
-            <tr><th scope="row">名称 / Name</th><td>便于区分的名字，例如“日常助手”或“代码助手”。</td></tr>
-            <tr><th scope="row">Base URL</th><td>服务商提供的 API 基础地址，不是网页版聊天地址。DeepSeek 示例：<code>https://api.deepseek.com</code>。</td></tr>
-            <tr><th scope="row">API Key</th><td>该服务的密钥。只填在应用的配置表单里，不要发到对话或截图中。</td></tr>
-            <tr><th scope="row">Model</th><td>服务商实际提供、且你的账号有权限调用的模型 ID，不是自定义昵称。</td></tr>
-            <tr><th scope="row">Protocol</th><td>按服务商文档选择协议，见下表。地址相似不代表协议相同。</td></tr>
-            <tr><th scope="row">System / Agent</th><td>System 留空可使用内置提示词；需要执行命令、读写文件等工具时启用 Agent。</td></tr>
+            <tr><th scope="row">配置名称 / Name</th><td>便于区分的名字，例如“日常助手”或“代码助手”。</td></tr>
+            <tr><th scope="row">接口地址 / Base URL</th><td>服务商提供的 API 基础地址，不是网页版聊天地址。DeepSeek 示例：<code>https://api.deepseek.com</code>。</td></tr>
+            <tr><th scope="row">API 密钥 / API Key</th><td>该服务的密钥。只填在应用的配置表单里，不要发到对话或截图中。</td></tr>
+            <tr><th scope="row">模型 / Model</th><td>服务商实际提供、且你的账号有权限调用的模型 ID，不是自定义昵称。</td></tr>
+            <tr><th scope="row">协议 / Protocol</th><td>按服务商文档选择协议，见下表。地址相似不代表协议相同；选中这一行后用左右键切换，不能手打。</td></tr>
+            <tr><th scope="row">系统提示 / 智能体</th><td>系统提示可保留默认值；需要执行命令、读写文件等工具时，将智能体设为 <code>true</code>。</td></tr>
           </tbody>
         </table></div>
         <div class="guide-table" role="region" aria-label="模型协议选择" tabindex="0"><table>
@@ -119,6 +137,27 @@
           </tbody>
         </table></div>
         <p class="guide-result"><strong>检查结果：</strong>保存后启动一个新 Copilot 对话进行验证。已有对话可点击顶部模型名称，或输入 <code>/model</code> 选择配置；这只切换当前对话，不会改写全局默认配置。ChatGPT、Kimi、xAI 和 OpenCode Go 不要走上面的密钥地址，按<a href="#subscriptions">订阅登录</a>配置。</p>
+        <h3 id="llm-edit">编辑已有的 LLM 提供方</h3>
+        <ol class="guide-steps">
+          <li>再次打开<strong>管理 AI 配置</strong>，选择<strong>编辑 LLM 提供方</strong>，按 <kbd>Enter</kbd>。</li>
+          <li>在标题为「编辑 LLM 提供方」的列表里，选择要修改的配置名称，再按 <kbd>Enter</kbd>。例如截图中的 <code>Opencode</code>。</li>
+          <li>表单会带入这份配置的现有内容。移到要修改的字段，使用 <kbd>Backspace</kbd> 删除旧内容后输入新值；协议仍用左右键切换。只修改需要调整的项目，密钥显示为星号时表示已填有内容。</li>
+          <li>选择底部的<strong>保存</strong>，更新原配置；需要马上验证则选择<strong>保存并打开</strong>。放弃本次改动时，选择<strong>返回</strong>或按 <kbd>Esc</kbd>，不要保存。</li>
+        </ol>
+        <div class="guide-note"><strong>点了名称却打开了对话？</strong>管理列表中直接选择已有配置名称会启动对话。编辑需要先进入「编辑 LLM 提供方」，再选择名称。</div>
+        <figure class="guide-shot guide-shot--form">
+          <a href="assets/tutorial/llm-edit-entry-macos.jpg" target="_blank" rel="noopener" aria-label="查看编辑 LLM 提供方入口截图原图"><img src="assets/tutorial/llm-edit-entry-macos.jpg" alt="LLM 提供方管理列表中选中编辑 LLM 提供方" width="680" height="600" loading="lazy" decoding="async"></a>
+          <figcaption>编辑第 1 步：先选「编辑 LLM 提供方」。</figcaption>
+        </figure>
+        <figure class="guide-shot guide-shot--form">
+          <a href="assets/tutorial/llm-edit-select-macos.jpg" target="_blank" rel="noopener" aria-label="查看选择待编辑 LLM 配置截图原图"><img src="assets/tutorial/llm-edit-select-macos.jpg" alt="编辑 LLM 提供方选择页，提示选择要编辑的配置，当前选中 Opencode" width="680" height="600" loading="lazy" decoding="async"></a>
+          <figcaption>编辑第 2 步：确认标题已变为「编辑 LLM 提供方」，再选择要修改的配置。</figcaption>
+        </figure>
+        <figure class="guide-shot">
+          <a href="assets/tutorial/llm-edit-form-macos.jpg" target="_blank" rel="noopener" aria-label="查看已有 LLM 配置的编辑与保存截图原图"><img src="assets/tutorial/llm-edit-form-macos.jpg" alt="已有 Opencode 配置的副驾表单，原有字段已填入，API 密钥显示星号，底部保存一行已选中" width="1100" height="920" loading="lazy" decoding="async"></a>
+          <figcaption>编辑第 3 步：修改后选「保存」。图中的已有配置仅用于演示编辑位置，地址和模型请以自己的服务为准；密钥由应用遮蔽为星号。</figcaption>
+        </figure>
+        <p class="guide-result"><strong>检查结果：</strong>重新进入编辑列表，打开同一份配置，确认修改已保存。要让已有对话使用更新后的配置，在该对话中通过顶部模型名称或 <code>/model</code> 重新选择它；也可以从管理列表打开一个新对话测试。</p>
       </section>
 
       <section id="subscriptions" class="guide-section">
