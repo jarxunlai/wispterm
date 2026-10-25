@@ -164,7 +164,10 @@ keybind = port-forwarding:r=port_forwarding_restart
 Use `keybind = clear` before custom bindings if you want to remove every default,
 including scoped workbench bindings, and rebuild the table from scratch. To
 confirm the running desktop version, open the command center (`Ctrl+Shift+P` on
-Windows, `Cmd+Shift+P` on macOS), type `version`, and press Enter.
+Windows, `Cmd+Shift+P` on macOS), type `version`, and press Enter. The command
+center is also reachable without the keyboard: the magnifier button next to the
+Copilot button in the Windows titlebar, or **View › Open Command Center** in the
+macOS menu bar.
 
 Choose **Toggle SSH Latency** in the command center to show the current SSH
 host's Ping round-trip time in the titlebar, refreshed every 5 seconds. The

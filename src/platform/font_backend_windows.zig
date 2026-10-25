@@ -40,6 +40,7 @@ pub fn titlebarIconGlyph(icon: anytype) u32 {
         .settings => 0xE713,
         .help => 0xE897,
         .copilot => 0xE8F2,
+        .command_palette => 0xE721, // Segoe MDL2 Search
     };
 }
 

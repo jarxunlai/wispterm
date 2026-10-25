@@ -29,11 +29,13 @@ pub const SIDEBAR_RESIZE_HIT_WIDTH: f32 = 8;
 pub const SIDEBAR_ROW_H: f32 = 42;
 pub const SIDEBAR_HEADER_H: f32 = 46;
 pub const TITLEBAR_TOGGLE_W: f32 = 46;
-// On macOS the native menu bar (WispTerm › Settings…, command palette) replaces
-// these in-titlebar buttons, so they collapse to zero width and are not drawn.
+// On macOS the native menu bar (WispTerm › Settings…, View › Open Command
+// Center) replaces these in-titlebar buttons, so they collapse to zero width and
+// are not drawn.
 pub const TITLEBAR_CONFIG_W: f32 = if (builtin.os.tag == .macos) 0 else 46;
 pub const TITLEBAR_HELP_W: f32 = if (builtin.os.tag == .macos) 0 else 46;
 pub const TITLEBAR_COPILOT_W: f32 = if (builtin.os.tag == .macos) 0 else 46;
+pub const TITLEBAR_PALETTE_W: f32 = if (builtin.os.tag == .macos) 0 else 46;
 // macOS draws the close / minimize / zoom (red / yellow / green) controls over
 // the left edge of the titlebar via AppKit when NSWindowStyleMaskFullSizeContentView
 // is set. Reserve a strip in *framebuffer pixels* so wispterm's own toggle and
@@ -432,6 +434,7 @@ pub fn renderTitlebar(window_width: f32, window_height: f32, titlebar_h: f32) vo
             TITLEBAR_CONFIG_W,
             TITLEBAR_HELP_W,
             TITLEBAR_COPILOT_W,
+            TITLEBAR_PALETTE_W,
             window_backend.caption_button_visual_style.width,
         );
         const top_bg = blend(bg, fg, 0.04);
@@ -488,6 +491,15 @@ pub fn renderTitlebar(window_width: f32, window_height: f32, titlebar_h: f32) vo
             else
                 icon_color;
             renderTitlebarIcon(.copilot, .copilot, copilot_x, layout.top_y, TITLEBAR_COPILOT_W, titlebar_h, copilot_tint);
+        }
+
+        const palette_x = layout.palette_x;
+        if (TITLEBAR_PALETTE_W > 0) {
+            const palette_hovered = mouseInTitlebarRange(titlebar_h, palette_x, palette_x + TITLEBAR_PALETTE_W);
+            if (palette_hovered) {
+                ui_pipeline.fillQuad(palette_x, layout.top_y, TITLEBAR_PALETTE_W, titlebar_h, hover_bg);
+            }
+            renderTitlebarIcon(.command_palette, .command_palette, palette_x, layout.top_y, TITLEBAR_PALETTE_W, titlebar_h, icon_color);
         }
 
         if (tab.activeTab()) |active_tab| {

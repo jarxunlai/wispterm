@@ -154,7 +154,8 @@ keybind = global:ctrl+backquote=toggle_quake
 
 如果想清除全部默认绑定并从头重建，请在自定义绑定前加上 `keybind = clear`。要确认正在
 运行的桌面版本，打开命令中心（Windows 上 `Ctrl+Shift+P`，macOS 上 `Cmd+Shift+P`），输入
-`version` 并回车。
+`version` 并回车。也可以不用键盘打开命令中心：Windows 标题栏里 Copilot 按钮旁的放大镜按钮，
+或 macOS 菜单栏的 **View › Open Command Center**。
 
 > **macOS 修饰键映射：** 多数快捷键用 **Cmd** 代替 Ctrl、用 **Opt** 代替 Alt。有两个例外
 > 保留 Ctrl 以避免与系统快捷键冲突：**Ctrl+`**（Quake —— `Cmd+`` 是系统窗口切换器）以及

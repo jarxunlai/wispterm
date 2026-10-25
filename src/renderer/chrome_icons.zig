@@ -20,6 +20,7 @@ pub const Kind = enum {
     settings,
     help,
     copilot,
+    command_palette,
     minimize,
     maximize,
     restore,
@@ -160,6 +161,16 @@ fn fillCopilot(out: []Quad, i: *usize, cx: f32, cy: f32, g: f32) void {
     append(out, i, .{ .x = bx + 2.0, .y = by - 2.4, .w = 3.2, .h = stroke });
 }
 
+fn fillCommandPalette(out: []Quad, i: *usize, cx: f32, cy: f32, g: f32) void {
+    // Magnifier: the command center is find-and-run, like VS Code's.
+    const r = g * 0.34;
+    const lx = cx - g * 0.12;
+    const ly = cy + g * 0.12;
+    appendOctagonRing(out, i, lx, ly, r, stroke);
+    const h0 = r * 0.72;
+    appendLine(out, i, lx + h0, ly - h0, cx + g * 0.42, cy - g * 0.42, stroke);
+}
+
 fn fillMinimize(out: []Quad, i: *usize, cx: f32, cy: f32, g: f32) void {
     appendHBar(out, i, cx, cy, g, stroke);
 }
@@ -193,6 +204,7 @@ pub fn fill(out: []Quad, kind: Kind, x: f32, y: f32, w: f32, h: f32) usize {
         .settings => fillSettings(out, &i, cx, cy, g),
         .help => fillHelp(out, &i, cx, cy, g),
         .copilot => fillCopilot(out, &i, cx, cy, g),
+        .command_palette => fillCommandPalette(out, &i, cx, cy, g),
         .minimize => fillMinimize(out, &i, cx, cy, g),
         .maximize => fillMaximize(out, &i, cx, cy, g),
         .restore => fillRestore(out, &i, cx, cy, g),
