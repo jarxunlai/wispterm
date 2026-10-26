@@ -658,13 +658,16 @@ Authenticode step (Windows packaging is still tracked separately from the macOS
 with SSL.com eSigner instead.
 
 `packaging/windows/sign-esigner.ps1` downloads CodeSignTool 1.3.2 and runs
-`batch_sign`. CodeSignTool sends file hashes to eSigner and writes an
-Authenticode signature. One OTP covers the batch. CodeSignTool 1.3.2's Java
-`main` discards picocli's exit code, so `java -jar ... batch_sign` exits 0 on
-authentication errors, invalid OTPs, and bad arguments. The script accepts the
-batch only when that process exits 0, the combined stdout, stderr, and
-`logs/code_signing_tool.log` contain `Batch sign command executed successfully`,
-that text does not contain `Error:` or an exception, and every staged file was
+`sign` once per distinct file (byte-identical copies in several bundles are
+signed once and copied). `sign` uploads the file, so an eSigner credential with
+Malware Blocker enabled scans it before signing; `batch_sign` only submits
+hashes and is rejected by such a credential with "hash needs to be scanned
+first before submitting for signing". citebox signs the same way. CodeSignTool
+1.3.2's Java `main` discards picocli's exit code, so `java -jar ... sign` exits
+0 on authentication errors, invalid OTPs, and bad arguments. The script accepts
+a file only when that process exits 0, the combined stdout, stderr, and
+`logs/code_signing_tool.log` contain `Code signed successfully`, that text does
+not contain `Error:` or an exception, and the signed copy was
 written. A failure prints those streams with the eSigner secret values removed.
 An invalid OTP is retried up to four times, waiting 35 seconds so the next try
 is in a later TOTP window, including when the process exits 0. The tag job
@@ -688,7 +691,7 @@ secrets. Do not commit them, print them, or echo them in a workflow log:
 | `ESIGNER_TOTP_SECRET` | TOTP seed. CodeSignTool turns it into the signing OTP |
 | `ESIGNER_PIN` | 4-digit PIN created when the certificate was enrolled in eSigner |
 
-CodeSignTool 1.3.2 `batch_sign` has no PIN argument. The tag workflow still
+CodeSignTool 1.3.2 `sign` has no PIN argument. The tag workflow still
 requires `ESIGNER_PIN` to be set so the credential set is complete. The script
 checks that it is non-empty, then leaves it off the CodeSignTool command line.
 
