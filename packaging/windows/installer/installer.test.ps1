@@ -93,11 +93,19 @@ try {
     # _?= runs the uninstaller in place so -Wait and the exit code mean something.
     $uninstall = Start-Process -FilePath (Join-Path $installDir 'Uninstall.exe') -ArgumentList @('/S', "_?=$installDir") -Wait -PassThru
     Assert-Equal $uninstall.ExitCode 0 'silent uninstall exits 0'
-    foreach ($name in @('wispterm.exe', 'wispterm-ssh-askpass.exe', 'version.txt', 'Uninstall.exe', 'uninstall.ps1', 'Uninstall-WispTerm.cmd', 'Replace-WispTerm.cmd', 'replace-install.ps1')) {
+    foreach ($name in @('wispterm.exe', 'wispterm-ssh-askpass.exe', 'version.txt', 'uninstall.ps1', 'Uninstall-WispTerm.cmd', 'Replace-WispTerm.cmd', 'replace-install.ps1')) {
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $installDir $name))) "uninstall removes $name"
     }
     Assert-True (Test-Path -LiteralPath (Join-Path $installDir 'user-note.txt')) 'uninstall keeps the user file'
     Assert-True (Test-Path -LiteralPath (Join-Path $installDir 'plugins\skills\sample.md')) 'uninstall keeps plugins, as uninstall.ps1 does'
+    # With _?= the uninstaller runs from $INSTDIR and, like any running exe,
+    # cannot delete itself; a normal run copies itself to %TEMP% first and the
+    # in-place Delete succeeds. So only Uninstall.exe may be left beside the
+    # user's files here.
+    $leftover = @(Get-ChildItem -LiteralPath $installDir -File | Where-Object { $_.Name -ne 'Uninstall.exe' -and $_.Name -ne 'user-note.txt' } | ForEach-Object { $_.Name })
+    Assert-Equal ($leftover -join ',') '' 'uninstall leaves no payload file besides the in-place uninstaller'
+    $dirs = @(Get-ChildItem -LiteralPath $installDir -Directory | ForEach-Object { $_.Name })
+    Assert-Equal ($dirs -join ',') 'plugins' 'uninstall leaves only the plugins folder'
     Assert-True (-not (Test-Path -LiteralPath $startMenuLink)) 'uninstall removes the Start-menu shortcut'
     Assert-True (-not (Test-Path -LiteralPath $desktopLink)) 'uninstall removes the desktop shortcut'
     Assert-True (-not (Test-Path -LiteralPath $uninstKey)) 'uninstall removes the Add/Remove Programs entry'
