@@ -716,11 +716,37 @@ To list the files a dist tree would sign, without calling eSigner:
 powershell -ExecutionPolicy Bypass -File .\packaging\windows\sign-esigner.ps1 -DistRoot .\zig-out\dist -ListOnly
 ```
 
-When WispTerm detects a newer release on Windows, it downloads the matching
-portable zip to the Downloads folder and reveals it in Explorer. Unzip the
-archive and double-click `Replace-WispTerm.cmd` to overwrite the Start-menu
-install (or to copy into `%LOCALAPPDATA%\Programs\WispTerm` and create that
-shortcut). You can still unzip over the existing folder by hand.
+#### Windows in-place updates
+
+A signed portable install updates itself (`src/update_inplace.zig`, after
+magpie's updater; Ghostty only auto-updates on macOS, through Sparkle, and
+shares the `auto-update = off | check | download` key and its titlebar
+`UpdatePill`). With `auto-update = download` (the default):
+
+1. A newer release's matching portable zip is downloaded in the background
+   into `<install>\.update\`, checked against the asset's SHA-256 `digest`
+   from the GitHub Releases API, and unpacked to `<install>\.update\<tag>\`.
+2. Every `.exe`/`.dll` in it must have a valid Authenticode signature, and
+   WispTerm's own (`wispterm*`) must be signed by the same publisher as the
+   running `wispterm.exe`. A running copy that is not signed (a dev build)
+   never updates itself.
+3. The titlebar shows an **Update** button. After a confirmation it moves each
+   current file aside (`<name>.wispterm-old`; Windows will rename a running exe
+   or a loaded dll but not overwrite one), moves the new file in, starts the
+   new `wispterm.exe` with `WISPTERM_UPDATE_STARTED` / `WISPTERM_UPDATE_REPLACES`,
+   and waits up to 20 s for it to report that it started. If it does not, the
+   swap is rolled back and the running version stays.
+4. Quitting with an update staged installs it, so the next launch runs it.
+5. The next launch waits for the old process to exit, then deletes the
+   `*.wispterm-old` files and `.update\`.
+
+Only installs with `version.txt` next to a signed `wispterm.exe`, in a folder
+WispTerm can write to, take part. Otherwise, and with `auto-update = check`,
+Download Update saves the matching portable zip to the Downloads folder and
+reveals it in Explorer. Unzip the archive and double-click
+`Replace-WispTerm.cmd` to overwrite the Start-menu install (or to copy into
+`%LOCALAPPDATA%\Programs\WispTerm` and create that shortcut). You can still
+unzip over the existing folder by hand.
 
 WispTerm does not build or publish a Windows installer. Use the default portable
 zip release asset; the `portable-compat` zip when using the embedded browser panel

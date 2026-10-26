@@ -481,6 +481,7 @@ const AutoFadeId = enum {
     whats_new,
     window_close_confirm,
     restore_defaults_confirm,
+    update_restart_confirm,
     integration_prompt,
     transfer_cancel_confirm,
 };
@@ -713,6 +714,55 @@ pub fn windowCloseConfirmExecuteAt(xpos: f64, ypos: f64, window_width: f32, wind
     }
     if (pointInTopRect(xpos, ypos, layout.cancel_x, layout.cancel_top_px, layout.cancel_w, layout.cancel_h)) {
         windowCloseConfirmClose();
+        return true;
+    }
+    return pointInTopRect(xpos, ypos, layout.panel_x, layout.panel_top_px, layout.panel_w, layout.panel_h);
+}
+
+pub fn updateRestartConfirmOpen() void {
+    confirmState().openUpdateRestart();
+}
+
+pub fn updateRestartConfirmClose() void {
+    confirmState().closeUpdateRestart();
+}
+
+pub fn updateRestartConfirmVisible() bool {
+    return confirmState().update_restart_visible;
+}
+
+/// Restart into the staged update. The swap and the wait for the new version
+/// run on the updater's worker; AppWindow quits once it reports `.quit`.
+fn updateRestartConfirmApply() void {
+    updateRestartConfirmClose();
+    const app = AppWindow.g_app orelse return;
+    if (app.requestInPlaceRestart()) {
+        showStatusToast(i18n.s().update_restarting);
+    } else {
+        showStatusToast(i18n.s().update_restart_failed);
+    }
+}
+
+pub fn updateRestartConfirmHandleKey(ev: input_key.KeyEvent) AppWindow.UiEffect {
+    if (!updateRestartConfirmVisible()) return .none;
+    switch (confirmState().handleUpdateRestartKey(ev)) {
+        .apply => updateRestartConfirmApply(),
+        .cancel, .none => {},
+    }
+    return .repaint;
+}
+
+/// Mouse handling for the update-restart dialog (same geometry as the
+/// window-close dialog). True when the click was consumed.
+pub fn updateRestartConfirmExecuteAt(xpos: f64, ypos: f64, window_width: f32, window_height: f32) bool {
+    if (!updateRestartConfirmVisible()) return false;
+    const layout = windowCloseConfirmLayout(window_width, window_height);
+    if (pointInTopRect(xpos, ypos, layout.close_x, layout.close_top_px, layout.close_w, layout.close_h)) {
+        updateRestartConfirmApply();
+        return true;
+    }
+    if (pointInTopRect(xpos, ypos, layout.cancel_x, layout.cancel_top_px, layout.cancel_w, layout.cancel_h)) {
+        updateRestartConfirmClose();
         return true;
     }
     return pointInTopRect(xpos, ypos, layout.panel_x, layout.panel_top_px, layout.panel_w, layout.panel_h);
@@ -8658,12 +8708,52 @@ pub fn renderWindowCloseConfirm(window_width: f32, window_height: f32) void {
 
 pub fn renderRestoreDefaultsConfirm(window_width: f32, window_height: f32) void {
     const fade = autoFade(.restore_defaults_confirm, restoreDefaultsConfirmVisible()) orelse return;
+    const strings = i18n.s();
+    renderTwoButtonConfirm(window_width, window_height, fade, .{
+        .title = strings.restore_defaults_title,
+        .body = strings.restore_defaults_body,
+        .hint = strings.restore_defaults_hint,
+        .apply = strings.restore_defaults_apply,
+        .cancel = strings.restore_defaults_cancel,
+    });
+}
+
+pub fn renderUpdateRestartConfirm(window_width: f32, window_height: f32) void {
+    const fade = autoFade(.update_restart_confirm, updateRestartConfirmVisible()) orelse return;
+    const strings = i18n.s();
+    var version_buf: [32]u8 = undefined;
+    const version = if (AppWindow.g_app) |app| app.inPlaceReadyVersion(&version_buf) orelse "" else "";
+    var title_buf: [160]u8 = undefined;
+    const title = std.fmt.bufPrint(&title_buf, "{s}{s}{s}", .{
+        strings.update_restart_title_prefix,
+        version,
+        strings.update_restart_title_suffix,
+    }) catch strings.update_restart_title_prefix;
+    renderTwoButtonConfirm(window_width, window_height, fade, .{
+        .title = title,
+        .body = strings.update_restart_body,
+        .hint = strings.update_restart_hint,
+        .apply = strings.update_restart_apply,
+        .cancel = strings.update_restart_later,
+    });
+}
+
+const TwoButtonConfirmText = struct {
+    title: []const u8,
+    body: []const u8,
+    hint: []const u8,
+    apply: []const u8,
+    cancel: []const u8,
+};
+
+/// Form-dialog confirm with a primary and a cancel button. Reuses the
+/// window-close panel/button geometry: close_* is the primary button,
+/// cancel_* the cancel one (hit-tested by the matching ExecuteAt).
+fn renderTwoButtonConfirm(window_width: f32, window_height: f32, fade: f32, text: TwoButtonConfirmText) void {
     titlebar.clearTextHint();
     ui_pipeline.g_ui_fade = fade;
     defer ui_pipeline.g_ui_fade = 1.0;
 
-    // Reuses the window-close panel/button geometry; close_* is the Restore
-    // button, cancel_* is Cancel.
     const layout = windowCloseConfirmLayout(window_width, window_height);
     const panel_y = @round(window_height - layout.panel_top_px - layout.panel_h);
     const apply_y = @round(window_height - layout.close_top_px - layout.close_h);
@@ -8698,25 +8788,25 @@ pub fn renderRestoreDefaultsConfirm(window_width: f32, window_height: f32) void 
 
     const text_x = icon_x + icon_size + 18;
     const text_right = layout.panel_x + layout.panel_w - pad;
-    renderTitlebarTextStrongLimited(i18n.s().restore_defaults_title, text_x, title_y, fg, text_right - text_x);
+    renderTitlebarTextStrongLimited(text.title, text_x, title_y, fg, text_right - text_x);
 
     const body_y = title_y - overlayTextHeight() - 16;
-    renderTitlebarTextLimited(i18n.s().restore_defaults_body, text_x, body_y, body, text_right - text_x);
+    renderTitlebarTextLimited(text.body, text_x, body_y, body, text_right - text_x);
 
     const hint_y = body_y - overlayTextHeight() - 8;
-    renderTitlebarTextLimited(i18n.s().restore_defaults_hint, text_x, hint_y, muted, text_right - text_x);
+    renderTitlebarTextLimited(text.hint, text_x, hint_y, muted, text_right - text_x);
 
     const footer_y = apply_y + layout.close_h + 20;
     ui_pipeline.fillQuadAlpha(layout.panel_x + 5, footer_y, layout.panel_w - 5, 1, quiet_border, 0.46);
 
     renderRoundedQuadAlpha(layout.close_x - 1, apply_y - 1, layout.close_w + 2, layout.close_h + 2, 8, mixColor(accent, fg, 0.20), 0.80);
     renderRoundedQuadAlpha(layout.close_x, apply_y, layout.close_w, layout.close_h, 7, accent_soft, 0.96);
-    const apply_label = i18n.s().restore_defaults_apply;
+    const apply_label = text.apply;
     renderTitlebarTextStrong(apply_label, layout.close_x + (layout.close_w - measureTitlebarText(apply_label)) / 2, rowTextY(apply_y, layout.close_h), mixColor(fg, accent, 0.18));
 
     renderRoundedQuadAlpha(layout.cancel_x - 1, cancel_y - 1, layout.cancel_w + 2, layout.cancel_h + 2, 8, quiet_border, 0.76);
     renderRoundedQuadAlpha(layout.cancel_x, cancel_y, layout.cancel_w, layout.cancel_h, 7, mixColor(bg, fg, 0.10), 0.96);
-    const cancel_label = i18n.s().restore_defaults_cancel;
+    const cancel_label = text.cancel;
     renderTitlebarTextStrong(cancel_label, layout.cancel_x + (layout.cancel_w - measureTitlebarText(cancel_label)) / 2, rowTextY(cancel_y, layout.cancel_h), body);
 }
 
@@ -9066,6 +9156,7 @@ pub fn anyBlockingOverlayVisible() bool {
         integrationPromptVisible() or
         windowCloseConfirmVisible() or
         restoreDefaultsConfirmVisible() or
+        updateRestartConfirmVisible() or
         transferCancelConfirmVisible();
 }
 

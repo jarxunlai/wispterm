@@ -143,6 +143,23 @@ pub const CursorStyle = enum {
     block_hollow,
 };
 
+/// What to do when a newer release is out. Same key and values as Ghostty's
+/// `auto-update` (Ghostty: macOS only, via Sparkle).
+pub const AutoUpdate = enum {
+    /// Never check by itself.
+    off,
+    /// Check after startup and say when a release is out.
+    check,
+    /// Check, download and verify it in the background, then offer a
+    /// restart from the titlebar. Quitting installs it. Only a signed
+    /// Windows portable install updates itself; elsewhere this is `check`.
+    download,
+
+    pub fn parse(s: []const u8) ?AutoUpdate {
+        return std.meta.stringToEnum(AutoUpdate, s);
+    }
+};
+
 pub const RightClickAction = enum {
     ignore,
     copy,
@@ -485,7 +502,11 @@ language: i18n.LanguageSetting = .auto,
 @"restore-tabs-on-startup": bool = false,
 
 /// Check GitHub Releases for a newer WispTerm version after startup.
+/// Older spelling of `auto-update`: false turns updates off.
 @"auto-update-check": bool = true,
+
+/// off | check | download. See AutoUpdate.
+@"auto-update": AutoUpdate = .download,
 
 /// Show the "What's New" changelog once after upgrading to a newer build.
 /// Disables only the automatic popup; the command-center entry always works.
@@ -1159,6 +1180,12 @@ fn applyKeyValue(self: *Config, allocator: std.mem.Allocator, key: []const u8, v
         } else {
             log.warn("invalid restore-tabs-on-startup: {s}", .{value});
         }
+    } else if (std.mem.eql(u8, key, "auto-update")) {
+        if (AutoUpdate.parse(value)) |mode| {
+            self.@"auto-update" = mode;
+        } else {
+            log.warn("invalid auto-update: {s}", .{value});
+        }
     } else if (std.mem.eql(u8, key, "auto-update-check")) {
         if (std.mem.eql(u8, value, "true")) {
             self.@"auto-update-check" = true;
@@ -1600,6 +1627,7 @@ pub fn writeHelp(writer: anytype) !void {
         \\  --working-directory <path>  Working directory for the first terminal
         \\  --jina-api-key <key>         API key for Jina web search/read ($websearch, $webread)
         \\  --windows-conpty <mode>      Windows pseudo console host: auto | system
+        \\  --auto-update <mode>        Updates: off | check | download
         \\  --auto-update-check <bool>  Check GitHub Releases after startup
         \\  --config-file <path>         Include another config file (prefix ? for optional)
         \\  --keybind <binding>          Configure a shortcut, e.g. global:ctrl+backquote=toggle_quake
@@ -2007,8 +2035,10 @@ const default_config_template =
     \\# OpenConsole.exe next to wispterm.exe; system forces the OS inbox one
     \\# windows-conpty = auto
     \\
-    \\# Updates
-    \\# auto-update-check = true
+    \\# Updates: off | check | download. download fetches and verifies a new
+    \\# release in the background, then offers a restart from the titlebar
+    \\# (signed Windows portable installs; elsewhere it behaves like check)
+    \\# auto-update = download
     \\
     \\# Debug
     \\# wispterm-debug-fps = false
@@ -2286,6 +2316,18 @@ test "config: auto update check option parses true false" {
 
     cfg.applyKeyValue(allocator, "auto-update-check", "maybe", ".");
     try std.testing.expectEqual(true, cfg.@"auto-update-check");
+}
+
+test "config: auto-update defaults to download and parses Ghostty's values" {
+    const allocator = std.testing.allocator;
+    var cfg: Config = .{};
+    try std.testing.expectEqual(AutoUpdate.download, cfg.@"auto-update");
+    cfg.applyKeyValue(allocator, "auto-update", "check", ".");
+    try std.testing.expectEqual(AutoUpdate.check, cfg.@"auto-update");
+    cfg.applyKeyValue(allocator, "auto-update", "off", ".");
+    try std.testing.expectEqual(AutoUpdate.off, cfg.@"auto-update");
+    cfg.applyKeyValue(allocator, "auto-update", "sometimes", ".");
+    try std.testing.expectEqual(AutoUpdate.off, cfg.@"auto-update");
 }
 
 test "config: quake mode defaults disabled and parses true false" {

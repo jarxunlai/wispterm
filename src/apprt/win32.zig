@@ -9,6 +9,7 @@
 //!   - direct2d-zig: https://github.com/marler8997/direct2d-zig
 
 const std = @import("std");
+const update_pill_state = @import("../update_pill_state.zig");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const windows = std.os.windows;
@@ -1814,9 +1815,10 @@ fn getCaptionButtonWidth() i32 {
 /// (WM_NCHITTEST / WM_LBUTTONDOWN) so their clicks reach the app instead of
 /// starting a window drag. Keep in sync
 /// with titlebar.zig's TITLEBAR_PALETTE_W + TITLEBAR_COPILOT_W + TITLEBAR_HELP_W
-/// + TITLEBAR_CONFIG_W.
+/// + TITLEBAR_CONFIG_W, plus the Update pill while a staged update is ready
+/// (update_pill_state, drawn left of the command center button).
 fn getAppButtonStripWidth() i32 {
-    return 46 * 4;
+    return 46 * 4 + @as(i32, @intFromFloat(update_pill_state.currentWidth()));
 }
 
 fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.winapi) LRESULT {

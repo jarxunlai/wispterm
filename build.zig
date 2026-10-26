@@ -36,7 +36,8 @@ const windows_system_libraries = [_][]const u8{
     "ole32",
     "psapi",
     "shcore", // GetDpiForMonitor for render diagnostics (per-monitor DPI)
-    "crypt32", // DPAPI seals the password store key
+    "crypt32", // DPAPI seals the password store key; signer name for updates
+    "wintrust", // WinVerifyTrust checks a staged update's Authenticode signature
 };
 
 const macos_app_frameworks = [_][]const u8{

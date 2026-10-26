@@ -39,6 +39,7 @@ const platform_input = @import("platform/input_events.zig");
 const platform_pty_command = @import("platform/pty_command.zig");
 const platform_wsl = @import("platform/wsl.zig");
 const window_backend = @import("platform/window_backend.zig");
+const update_pill_state = @import("update_pill_state.zig");
 const window_metrics = @import("ui/window_metrics.zig");
 const WindowMetrics = window_metrics.WindowMetrics;
 const input_key = @import("input/key.zig");
@@ -3461,6 +3462,9 @@ fn dispatchKey(ev: platform_input.KeyEvent) ui_effect.UiEffect {
     if (overlays.restoreDefaultsConfirmVisible()) {
         return overlays.restoreDefaultsConfirmHandleKey(key_event);
     }
+    if (overlays.updateRestartConfirmVisible()) {
+        return overlays.updateRestartConfirmHandleKey(key_event);
+    }
     if (overlays.settingsPageVisible()) {
         return overlays.settingsPageHandleKey(key_event);
     }
@@ -4833,6 +4837,26 @@ fn hitTestPaletteButton(xpos: f64, ypos: f64) bool {
     return xpos >= palette_x and xpos < palette_x + palette_w;
 }
 
+/// The Update pill sits left of the command center button while a staged
+/// update is ready (update_pill_state).
+fn hitTestUpdatePill(xpos: f64, ypos: f64) bool {
+    const titlebar_h = titlebarHeight();
+    if (ypos < 0 or ypos >= titlebar_h) return false;
+    if (titlebar.TITLEBAR_PALETTE_W <= 0) return false;
+    const pill_w: f64 = @floatCast(update_pill_state.currentWidth());
+    if (pill_w <= 0) return false;
+    const win = AppWindow.g_window orelse return false;
+    const size = clientSize(win);
+    const window_width: f64 = @floatFromInt(size.width);
+    const caption_w: f64 = 46 * 3;
+    const config_w: f64 = @floatCast(titlebar.TITLEBAR_CONFIG_W);
+    const help_w: f64 = @floatCast(titlebar.TITLEBAR_HELP_W);
+    const copilot_w: f64 = @floatCast(titlebar.TITLEBAR_COPILOT_W);
+    const palette_w: f64 = @floatCast(titlebar.TITLEBAR_PALETTE_W);
+    const pill_x = window_width - caption_w - config_w - help_w - copilot_w - palette_w - pill_w;
+    return xpos >= pill_x and xpos < pill_x + pill_w;
+}
+
 fn handleTopbarPress(xpos: f64) void {
     const toggle_x: f64 = @floatCast(titlebar.titlebarLeftReserved());
     const toggle_end: f64 = toggle_x + @as(f64, titlebar.TITLEBAR_TOGGLE_W);
@@ -4843,6 +4867,12 @@ fn handleTopbarPress(xpos: f64) void {
 
     if (hitTestPaletteButton(xpos, titlebarHeight() / 2)) {
         overlays.commandPaletteToggle();
+        requestInputRepaint();
+        return;
+    }
+
+    if (hitTestUpdatePill(xpos, titlebarHeight() / 2)) {
+        overlays.updateRestartConfirmOpen();
         requestInputRepaint();
         return;
     }
@@ -5876,6 +5906,17 @@ fn handleMouseButton(ev: platform_input.MouseButtonEvent) void {
             const xpos: f64 = @floatFromInt(ev.x);
             const ypos: f64 = @floatFromInt(ev.y);
             _ = overlays.restoreDefaultsConfirmExecuteAt(xpos, ypos, @floatFromInt(fb.width), @floatFromInt(fb.height));
+            requestInputRepaint();
+        }
+        return;
+    }
+    if (overlays.updateRestartConfirmVisible()) {
+        if (ev.button == .left and ev.action == .press) {
+            const win = AppWindow.g_window orelse return;
+            const fb = window_backend.framebufferSize(win);
+            const xpos: f64 = @floatFromInt(ev.x);
+            const ypos: f64 = @floatFromInt(ev.y);
+            _ = overlays.updateRestartConfirmExecuteAt(xpos, ypos, @floatFromInt(fb.width), @floatFromInt(fb.height));
             requestInputRepaint();
         }
         return;

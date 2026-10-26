@@ -37,6 +37,7 @@ const right_click_actions = [_][]const u8{ "ignore", "copy", "paste", "copy-or-p
 const url_open_modes = [_][]const u8{ "embedded", "system-browser" };
 const agent_permissions = [_][]const u8{ "ask", "confirm", "auto", "guarded", "full", "full-permission" };
 const windows_conpty_values = [_][]const u8{ "auto", "system" };
+const auto_update_values = [_][]const u8{ "off", "check", "download" };
 const language_values = [_][]const u8{ "auto", "en", "zh", "zh-CN", "zh_CN", "ZH" };
 const image_modes = [_][]const u8{ "fill", "fit", "center", "tile" };
 
@@ -104,6 +105,7 @@ const key_specs = [_]KeySpec{
     .{ .name = "focus-follows-mouse", .kind = .boolean, .default_value = "false", .values = bool_values[0..] },
     .{ .name = "restore-tabs-on-startup", .kind = .boolean, .default_value = "false", .values = bool_values[0..] },
     .{ .name = "auto-update-check", .kind = .boolean, .default_value = "true", .values = bool_values[0..] },
+    .{ .name = "auto-update", .kind = .one_of, .default_value = "download", .values = auto_update_values[0..] },
     .{ .name = "whats-new-on-update", .kind = .boolean, .default_value = "true", .values = bool_values[0..] },
     .{ .name = "copilot-hint", .kind = .boolean, .default_value = "true", .values = bool_values[0..] },
     .{ .name = "memory-digest-enabled", .kind = .boolean, .default_value = "false", .values = bool_values[0..] },

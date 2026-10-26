@@ -312,6 +312,9 @@ test {
     _ = @import("source_guards/objc_autorelease_guard.zig");
     _ = @import("renderer/overlays/transfer_toast_model.zig");
     _ = @import("renderer/overlays/update_prompt_model.zig");
+    _ = @import("update_stage.zig");
+    _ = @import("update_pill_state.zig");
+    _ = @import("update_inplace.zig");
     _ = @import("renderer/overlays/whats_new_model.zig");
     _ = @import("renderer/ui_batch.zig");
     _ = @import("renderer/assistant/transcript_wrap.zig");
