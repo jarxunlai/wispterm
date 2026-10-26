@@ -3390,14 +3390,8 @@ fn sessionLauncherHandleKeyImpl(ev: input_key.KeyEvent) void {
         switch (ev.key) {
             .tab, .arrow_down => assistantProfiles().focusNextRow(),
             .arrow_up => assistantProfiles().focusPrevRow(),
-            .arrow_right => {
-                if (assistantProfiles().focus == @intFromEnum(AiField.protocol)) cycleAiFormProtocol(true);
-                if (assistantProfiles().focus == @intFromEnum(AiField.vision)) toggleAiFormVision();
-            },
-            .arrow_left => {
-                if (assistantProfiles().focus == @intFromEnum(AiField.protocol)) cycleAiFormProtocol(false);
-                if (assistantProfiles().focus == @intFromEnum(AiField.vision)) toggleAiFormVision();
-            },
+            .arrow_right => _ = cycleFocusedAiFormChoice(true),
+            .arrow_left => _ = cycleFocusedAiFormChoice(false),
             .backspace => {
                 if (assistantProfiles().focus < AI_FIELD_COUNT) backspaceAiFormField(assistantProfiles().focus);
             },
@@ -3410,12 +3404,8 @@ fn sessionLauncherHandleKeyImpl(ev: input_key.KeyEvent) void {
     switch (ev.key) {
         .tab, .arrow_down => sshState().focusNextRow(),
         .arrow_up => sshState().focusPrevRow(),
-        .arrow_right => {
-            if (sshState().focus == @intFromEnum(SshField.auth_method)) cycleSshFormAuthMethod(true);
-        },
-        .arrow_left => {
-            if (sshState().focus == @intFromEnum(SshField.auth_method)) cycleSshFormAuthMethod(false);
-        },
+        .arrow_right => _ = cycleFocusedSshFormChoice(true),
+        .arrow_left => _ = cycleFocusedSshFormChoice(false),
         .backspace => {
             // auth_method is a ←/→ toggle, not a text field — never backspace it.
             if (sshState().focus < SSH_FIELD_COUNT and sshState().focus != @intFromEnum(SshField.auth_method) and sshState().lens[sshState().focus] > 0) sshState().lens[sshState().focus] -= 1;
@@ -3845,6 +3835,15 @@ fn cycleSshFormAuthMethod(forward: bool) void {
     const len = @min(next.len, SSH_FIELD_MAX);
     @memcpy(sshState().bufs[idx][0..len], next[0..len]);
     sshState().lens[idx] = len;
+}
+
+/// Advance the focused SSH form row if it is a ←/→ choice row (auth method).
+/// Shared by the arrow keys and a mouse click on the row (click = forward).
+/// Returns whether the focused row was a choice row.
+fn cycleFocusedSshFormChoice(forward: bool) bool {
+    if (sshState().focus != @intFromEnum(SshField.auth_method)) return false;
+    cycleSshFormAuthMethod(forward);
+    return true;
 }
 
 /// Auth-method row display: current method name plus the ←/→ toggle affordance.
@@ -5141,6 +5140,49 @@ fn toggleAiFormVision() void {
     setAiDefault(.vision, if (on) "off" else "on");
 }
 
+/// Advance the focused AI form row if it is a ←/→ choice row (protocol, vision).
+/// Shared by the arrow keys and a mouse click on the row (click = forward).
+/// Returns whether the focused row was a choice row.
+fn cycleFocusedAiFormChoice(forward: bool) bool {
+    const focus = assistantProfiles().focus;
+    if (focus == @intFromEnum(AiField.protocol)) {
+        cycleAiFormProtocol(forward);
+        return true;
+    }
+    if (focus == @intFromEnum(AiField.vision)) {
+        toggleAiFormVision();
+        return true;
+    }
+    return false;
+}
+
+test "cycleFocusedAiFormChoice advances only the ←/→ choice rows" {
+    const saved_focus = assistantProfiles().focus;
+    const saved_vision_len = assistantProfiles().lens[@intFromEnum(AiField.vision)];
+    const saved_vision_buf = assistantProfiles().bufs[@intFromEnum(AiField.vision)];
+    const saved_model_len = assistantProfiles().lens[@intFromEnum(AiField.model)];
+    const saved_model_buf = assistantProfiles().bufs[@intFromEnum(AiField.model)];
+    defer {
+        assistantProfiles().focus = saved_focus;
+        assistantProfiles().lens[@intFromEnum(AiField.vision)] = saved_vision_len;
+        assistantProfiles().bufs[@intFromEnum(AiField.vision)] = saved_vision_buf;
+        assistantProfiles().lens[@intFromEnum(AiField.model)] = saved_model_len;
+        assistantProfiles().bufs[@intFromEnum(AiField.model)] = saved_model_buf;
+    }
+
+    setAiDefault(.vision, "on");
+    assistantProfiles().focus = @intFromEnum(AiField.vision);
+    try std.testing.expect(cycleFocusedAiFormChoice(true));
+    try std.testing.expectEqualStrings("off", aiField(.vision));
+    try std.testing.expect(cycleFocusedAiFormChoice(true));
+    try std.testing.expectEqualStrings("on", aiField(.vision));
+
+    setAiDefault(.model, "leave-me");
+    assistantProfiles().focus = @intFromEnum(AiField.model);
+    try std.testing.expect(!cycleFocusedAiFormChoice(true)); // text rows are not cycled by a click
+    try std.testing.expectEqualStrings("leave-me", aiField(.model));
+}
+
 /// Vision row display: on/off plus the ←/→ toggle affordance.
 fn aiVisionDisplay() []const u8 {
     const S = struct {
@@ -6194,6 +6236,7 @@ fn sessionHitTest(xpos: f64, ypos: f64, window_width: f32, window_height: f32, t
     if (g_ai_form_visible) {
         if (row < AI_FIELD_COUNT) {
             assistantProfiles().focus = row;
+            _ = cycleFocusedAiFormChoice(true); // ←/→ choice rows advance on click
             return null;
         }
         assistantProfiles().focus = row;
@@ -6207,6 +6250,7 @@ fn sessionHitTest(xpos: f64, ypos: f64, window_width: f32, window_height: f32, t
 
     if (row < SSH_FIELD_COUNT) {
         sshState().focus = row;
+        _ = cycleFocusedSshFormChoice(true); // ←/→ choice rows advance on click
         return null;
     }
     sshState().focus = row;

@@ -5859,6 +5859,9 @@ fn handleMouseButton(ev: platform_input.MouseButtonEvent) void {
             const top_offset: f32 = @floatCast(titlebarHeight());
             const xpos: f64 = @floatFromInt(ev.x);
             const ypos: f64 = @floatFromInt(ev.y);
+            // A click can move focus or cycle a ←/→ choice row without running
+            // an action; repaint either way so it does not wait for a blink.
+            defer requestInputRepaint();
             if (overlays.sessionLauncherExecuteAt(xpos, ypos, w_f, h_f, top_offset)) return;
             if (!overlays.sessionLauncherContainsPoint(xpos, ypos, w_f, h_f, top_offset)) {
                 overlays.sessionLauncherClose();
