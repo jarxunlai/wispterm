@@ -147,8 +147,16 @@ Add-Content -Path "$env:APPDATA\wispterm\config" -Value "wispterm-d3d-present = 
 
 ## Which Windows Package Should I Download?
 
-Use `wispterm-windows-portable-*.zip` by default. Starting with v1.34.0 it uses
-the native Direct3D 11 renderer and is the recommended Windows package.
+Use `wispterm-windows-setup-*.exe` if you want WispTerm installed: it puts the
+default Direct3D 11 build in `%LOCALAPPDATA%\Programs\WispTerm` for the
+current user (no administrator prompt), adds a Start menu shortcut and an
+Add/Remove Programs entry, and can register the Explorer context menu. It
+installs the same files as the portable zip, so in-app updates work the same
+way.
+
+Use `wispterm-windows-portable-*.zip` to run WispTerm from a folder of your
+choice without installing. Starting with v1.34.0 it uses the native Direct3D 11
+renderer and is the recommended portable package.
 
 Use `wispterm-windows-portable-compat-*.zip` on older Windows 10 machines or
 when you want the embedded browser loader and bundled modern ConPTY next to the

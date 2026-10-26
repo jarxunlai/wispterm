@@ -1,7 +1,8 @@
 # Authenticode-sign WispTerm's first-party Windows dist binaries with SSL.com
 # eSigner CodeSignTool, then verify each signature. Zip archives are never
 # signed. Tag releases call this with -Require after packaging and before
-# Compress-Archive.
+# Compress-Archive, and once more with -File for the NSIS setup exe that
+# build-installer.ps1 wraps around the signed portable tree.
 #
 # Required environment variables (GitHub Actions secrets; never commit values):
 #   ESIGNER_CREDENTIAL_ID  eSigner signing credential id
@@ -35,8 +36,11 @@
 
 param(
     # Not Mandatory: packaging/windows/sign-esigner.test.ps1 dot-sources this
-    # file to call the functions. The entry point still requires -DistRoot.
+    # file to call the functions. The entry point still requires -DistRoot or
+    # -File.
     [string]$DistRoot,
+    # Sign these files in place instead of a dist tree (the setup exe).
+    [string[]]$File = @(),
     [switch]$Require,
     [switch]$ListOnly
 )
@@ -492,8 +496,12 @@ function Assert-AuthenticodeSigned {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-if ([string]::IsNullOrWhiteSpace($DistRoot)) {
-    throw 'DistRoot is required. Pass -DistRoot <zig-out/dist>.'
+$fileMode = @($File).Count -gt 0
+if ($fileMode -and -not [string]::IsNullOrWhiteSpace($DistRoot)) {
+    throw 'Pass either -DistRoot <zig-out/dist> or -File <exe>, not both.'
+}
+if (-not $fileMode -and [string]::IsNullOrWhiteSpace($DistRoot)) {
+    throw 'DistRoot is required. Pass -DistRoot <zig-out/dist> or -File <exe>.'
 }
 
 if (-not $ListOnly) {
@@ -502,15 +510,31 @@ if (-not $ListOnly) {
     }
 }
 
-$resolvedRoot = Resolve-DistRoot $DistRoot
-$targets = @(Get-SignTargets -Root $resolvedRoot)
+if ($fileMode) {
+    $targets = @(foreach ($path in $File) {
+        $full = Resolve-DistRoot $path
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "Sign target not found: $full" }
+        if ([IO.Path]::GetExtension($full) -notin @('.exe', '.dll')) { throw "Only .exe and .dll files are signed: $full" }
+        Get-Item -LiteralPath $full
+    })
+} else {
+    $resolvedRoot = Resolve-DistRoot $DistRoot
+    $targets = @(Get-SignTargets -Root $resolvedRoot)
+}
 
 if ($ListOnly) {
     $targets | Sort-Object FullName | ForEach-Object { Write-Output $_.FullName }
     exit 0
 }
 
-$before = Get-TreeHashes -Root $resolvedRoot
+$before = @{}
+if ($fileMode) {
+    foreach ($file in $targets) {
+        $before[$file.FullName] = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+    }
+} else {
+    $before = Get-TreeHashes -Root $resolvedRoot
+}
 $targetPaths = @{}
 foreach ($file in $targets) { $targetPaths[$file.FullName] = $true }
 
@@ -565,7 +589,14 @@ try {
     }
 }
 
-$after = Get-TreeHashes -Root $resolvedRoot
+$after = @{}
+if ($fileMode) {
+    foreach ($file in $targets) {
+        $after[$file.FullName] = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+    }
+} else {
+    $after = Get-TreeHashes -Root $resolvedRoot
+}
 foreach ($path in @($before.Keys)) {
     if (-not $after.ContainsKey($path)) {
         throw "Dist file disappeared during signing: $path"
