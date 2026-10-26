@@ -10,7 +10,14 @@
 #   ESIGNER_TOTP_SECRET    TOTP seed CodeSignTool uses to compute the OTP
 #   ESIGNER_PIN            4-digit eSigner enrollment PIN for that credential
 #
-# CodeSignTool 1.3.2 batch_sign has no PIN flag. The PIN is required so the
+# Each file goes through CodeSignTool `sign`, one at a time, like citebox's
+# scripts/sign-windows-authenticode.ps1. `batch_sign` only submits hashes, and
+# an eSigner credential with Malware Blocker enabled rejects those with
+# "hash needs to be scanned first before submitting for signing"; `sign`
+# uploads the file, so eSigner scans it before signing. Byte-identical targets
+# (the same helper copied into every bundle) are signed once.
+#
+# CodeSignTool 1.3.2 sign has no PIN flag. The PIN is required so the
 # release credential set is complete; it is not placed on the command line and
 # is never written to the log. Signing uses username, password, credential id,
 # and the TOTP secret. PE timestamps use TSA_URL. SSL.com's default
@@ -21,8 +28,8 @@
 #
 # CodeSignTool 1.3.2 main() discards picocli's exit code, so java exits 0 on
 # auth errors, invalid OTPs, and bad arguments. Success is exit 0, the
-# "Batch sign command executed successfully" marker, no Error:/exception text,
-# and every staged file. An invalid OTP is retried into the next TOTP window
+# "Code signed successfully" marker, no Error:/exception text, and the signed
+# copy in the output directory. An invalid OTP is retried into the next TOTP window
 # even when the process exits 0. Failures print sanitized stdout, stderr, and
 # logs/code_signing_tool.log.
 
@@ -52,8 +59,8 @@ $script:SecretNames = @(
     'ESIGNER_TOTP_SECRET',
     'ESIGNER_PIN'
 )
-# 35s leaves the current 30s TOTP window. One tag job signs every bundle, so
-# there is no second slot to stagger.
+# 35s leaves the current 30s TOTP window. Files are signed one after another,
+# so a second file in the same window can see its OTP rejected and retries.
 $script:OtpRetryDelaySeconds = 35
 $script:OtpAttemptLimit = 4
 $script:CodeSignTimeoutSeconds = 900
@@ -137,9 +144,6 @@ function Get-SignTargets {
         foreach ($file in $found) { $targets.Add($file) }
     }
 
-    if ($targets.Count -gt 100) {
-        throw "CodeSignTool batch_sign accepts at most 100 files ($($targets.Count) selected)."
-    }
     if ($targets.Count -lt 1) {
         throw "No first-party binaries selected under $Root"
     }
@@ -318,7 +322,7 @@ function Get-CodeSignDisposition {
         return 'retry-otp'
     }
     $hasError = $text -match '(?im)(^|\s)Error\s*:' -or $text -match '(?i)(\bException\b|java\.lang\.)'
-    $hasSuccess = $text -match 'Batch sign command executed successfully'
+    $hasSuccess = $text -match '(?i)Code signed successfully'
     if ($ExitCode -eq 0 -and $SignedFilesPresent -and $hasSuccess -and -not $hasError) {
         return 'success'
     }
@@ -392,6 +396,7 @@ function Test-ExpectedSignedFiles {
 
 function Format-CodeSignFailure {
     param(
+        [string]$Leaf,
         $Result,
         [string]$LogText,
         [bool]$SignedFilesPresent
@@ -404,39 +409,40 @@ function Format-CodeSignFailure {
         'rejected the signed result'
     }
     $body = Format-CapturedOutput -Result $Result -LogText $LogText
-    return "CodeSignTool batch_sign failed ($reason, exit $($Result.ExitCode)).`n$body"
+    return "CodeSignTool sign failed for $Leaf ($reason, exit $($Result.ExitCode)).`n$body"
 }
 
-function Invoke-CodeSignToolBatch {
+function Invoke-CodeSignToolSign {
     param(
         [Parameter(Mandatory = $true)]$Tool,
-        [Parameter(Mandatory = $true)][string]$InputDir,
+        [Parameter(Mandatory = $true)][string]$InputFile,
         [Parameter(Mandatory = $true)][string]$OutputDir,
-        [Parameter(Mandatory = $true)][string[]]$ExpectedNames,
         [int]$OtpRetrySeconds = 35,
         [int]$TimeoutSeconds = 900,
         # Tests substitute the process. Production starts the bundled java.
         [scriptblock]$RunProcess
     )
     $ErrorActionPreference = 'Stop'
+    $leaf = [IO.Path]::GetFileName($InputFile)
     for ($attempt = 1; $attempt -le $script:OtpAttemptLimit; $attempt++) {
         if (Test-Path -LiteralPath $OutputDir) {
             Remove-Item -LiteralPath $OutputDir -Recurse -Force
         }
+        New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
         Clear-CodeSignToolLog -ToolRoot $Tool.Root
 
-        # batch_sign refuses an output directory that already exists and reads
-        # ./conf/code_sign_tool.properties from the process working directory.
-        # Each secret is its own argument so quotes, spaces, and a trailing
+        # sign reads ./conf/code_sign_tool.properties from the process working
+        # directory and writes the signed copy under -output_dir_path. Each
+        # secret is its own argument so quotes, spaces, and a trailing
         # backslash survive. Stdin is closed so an OTP prompt cannot hang.
         $signArgs = @(
             '-jar', $Tool.Jar,
-            'batch_sign',
+            'sign',
             "-username=$(Get-SecretValue 'ESIGNER_USERNAME')",
             "-password=$(Get-SecretValue 'ESIGNER_PASSWORD')",
             "-credential_id=$(Get-SecretValue 'ESIGNER_CREDENTIAL_ID')",
             "-totp_secret=$(Get-SecretValue 'ESIGNER_TOTP_SECRET')",
-            "-input_dir_path=$InputDir",
+            "-input_file_path=$InputFile",
             "-output_dir_path=$OutputDir"
         )
         if ($null -ne $RunProcess) {
@@ -448,16 +454,16 @@ function Invoke-CodeSignToolBatch {
 
         $logText = Read-CodeSignToolLog -ToolRoot $Tool.Root
         $toolText = @($result.StdOut, $result.StdErr, $logText) -join "`n"
-        $signedPresent = Test-ExpectedSignedFiles -OutputDir $OutputDir -ExpectedNames $ExpectedNames
+        $signedPresent = Test-ExpectedSignedFiles -OutputDir $OutputDir -ExpectedNames @($leaf)
         $disposition = Get-CodeSignDisposition -ExitCode $result.ExitCode -Output $toolText -SignedFilesPresent $signedPresent -TimedOut $result.TimedOut
         if ($disposition -eq 'success') {
-            Write-Host "CodeSignTool batch_sign completed for $($ExpectedNames.Count) files."
-            return
+            Write-Host "CodeSignTool signed $leaf."
+            return (Join-Path $OutputDir $leaf)
         }
 
-        $failure = Redact-Text (Format-CodeSignFailure -Result $result -LogText $logText -SignedFilesPresent $signedPresent)
+        $failure = Redact-Text (Format-CodeSignFailure -Leaf $leaf -Result $result -LogText $logText -SignedFilesPresent $signedPresent)
         if ($disposition -eq 'retry-otp' -and $attempt -lt $script:OtpAttemptLimit) {
-            Write-Host "eSigner rejected the one-time password (attempt $attempt/$($script:OtpAttemptLimit)). Waiting ${OtpRetrySeconds}s for the next TOTP window."
+            Write-Host "eSigner rejected the one-time password for $leaf (attempt $attempt/$($script:OtpAttemptLimit)). Waiting ${OtpRetrySeconds}s for the next TOTP window."
             Write-Host $failure
             if ($OtpRetrySeconds -gt 0) {
                 Start-Sleep -Seconds $OtpRetrySeconds
@@ -466,7 +472,7 @@ function Invoke-CodeSignToolBatch {
         }
         throw $failure
     }
-    throw 'CodeSignTool batch_sign failed.'
+    throw "CodeSignTool sign failed for $leaf."
 }
 
 function Assert-AuthenticodeSigned {
@@ -516,16 +522,15 @@ $toolDir = Join-Path $tempRoot "CodeSignTool-v$($script:CodeSignToolVersion)"
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 try {
-    $staged = New-Object System.Collections.Generic.List[object]
-    $index = 0
+    # One sign call per distinct file content: the askpass helper and shell
+    # extension are the same bytes in every bundle.
+    $groups = [ordered]@{}
     foreach ($file in ($targets | Sort-Object FullName)) {
-        $stagedName = '{0:D3}-{1}' -f $index, $file.Name
-        $index += 1
-        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $stage $stagedName) -Force
-        $staged.Add([pscustomobject]@{
-            Source = $file.FullName
-            StagedName = $stagedName
-        })
+        $hash = $before[$file.FullName]
+        if (-not $groups.Contains($hash)) {
+            $groups[$hash] = New-Object System.Collections.Generic.List[string]
+        }
+        $groups[$hash].Add($file.FullName)
     }
 
     $tool = Install-CodeSignTool -Destination $toolDir
@@ -536,16 +541,21 @@ try {
         throw 'CodeSignTool TSA_URL is not the SSL.com RFC3161 RSA endpoint http://ts.ssl.com/legacy'
     }
 
-    Write-Host "Signing $($staged.Count) first-party binaries with CodeSignTool $($script:CodeSignToolVersion)"
-    [string[]]$expectedNames = @(foreach ($entry in $staged) { $entry.StagedName })
-    Invoke-CodeSignToolBatch -Tool $tool -InputDir $stage -OutputDir $signed -ExpectedNames $expectedNames -OtpRetrySeconds $script:OtpRetryDelaySeconds -TimeoutSeconds $script:CodeSignTimeoutSeconds
-
-    foreach ($entry in $staged) {
-        $signedFile = Join-Path $signed $entry.StagedName
-        if (-not (Test-Path -LiteralPath $signedFile)) {
-            throw "CodeSignTool did not write $($entry.StagedName)"
+    Write-Host "Signing $($targets.Count) first-party binaries ($($groups.Count) distinct) with CodeSignTool $($script:CodeSignToolVersion) sign"
+    $index = 0
+    foreach ($hash in @($groups.Keys)) {
+        $paths = $groups[$hash]
+        $leaf = [IO.Path]::GetFileName($paths[0])
+        $inDir = Join-Path $stage ('{0:D3}' -f $index)
+        $outDir = Join-Path $signed ('{0:D3}' -f $index)
+        $index += 1
+        New-Item -ItemType Directory -Force -Path $inDir | Out-Null
+        $stagedFile = Join-Path $inDir $leaf
+        Copy-Item -LiteralPath $paths[0] -Destination $stagedFile -Force
+        $signedFile = Invoke-CodeSignToolSign -Tool $tool -InputFile $stagedFile -OutputDir $outDir -OtpRetrySeconds $script:OtpRetryDelaySeconds -TimeoutSeconds $script:CodeSignTimeoutSeconds
+        foreach ($path in $paths) {
+            Copy-Item -LiteralPath $signedFile -Destination $path -Force
         }
-        Copy-Item -LiteralPath $signedFile -Destination $entry.Source -Force
     }
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
@@ -569,9 +579,9 @@ foreach ($path in @($before.Keys)) {
     }
 }
 
-foreach ($entry in $staged) {
-    Assert-AuthenticodeSigned -Path $entry.Source
+foreach ($file in $targets) {
+    Assert-AuthenticodeSigned -Path $file.FullName
 }
 
-Write-Host "Authenticode verification passed for $($staged.Count) files. Zip archives were not signed."
+Write-Host "Authenticode verification passed for $($targets.Count) files. Zip archives were not signed."
 }

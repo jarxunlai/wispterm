@@ -71,13 +71,13 @@ Assert-Equal $script:OtpAttemptLimit 4 'invalid otp is tried four times'
 Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output 'Error: The provided authorization grant is invalid, expired, revoked' -SignedFilesPresent $false -TimedOut $false) 'fail' 'exit 0 plus Error is failure'
 Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output 'Error: invalid otp' -SignedFilesPresent $false -TimedOut $false) 'retry-otp' 'invalid otp retries when exit code is 0'
 Assert-Equal (Get-CodeSignDisposition -ExitCode 1 -Output 'Error: The OTP is invalid.' -SignedFilesPresent $false -TimedOut $false) 'retry-otp' 'OTP is invalid retries'
-Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output 'Batch sign command executed successfully' -SignedFilesPresent $true -TimedOut $false) 'success' 'success marker and files is success'
-Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output 'Batch sign command executed successfully' -SignedFilesPresent $false -TimedOut $false) 'fail' 'success marker without files is failure'
+Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output 'Code signed successfully: wispterm.exe' -SignedFilesPresent $true -TimedOut $false) 'success' 'success marker and files is success'
+Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output 'Code signed successfully: wispterm.exe' -SignedFilesPresent $false -TimedOut $false) 'fail' 'success marker without files is failure'
 Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output 'java.lang.IllegalArgumentException: Illegal base64 character' -SignedFilesPresent $false -TimedOut $false) 'fail' 'exception text is failure'
-Assert-Equal (Get-CodeSignDisposition -ExitCode 3 -Output 'Batch sign command executed successfully' -SignedFilesPresent $true -TimedOut $false) 'fail' 'non-zero exit is failure'
-Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output "WARNING: sun.reflect.Reflection.getCallerClass is not supported.`nBatch sign command executed successfully" -SignedFilesPresent $true -TimedOut $false) 'success' 'JVM warning does not hide success'
+Assert-Equal (Get-CodeSignDisposition -ExitCode 3 -Output 'Code signed successfully: wispterm.exe' -SignedFilesPresent $true -TimedOut $false) 'fail' 'non-zero exit is failure'
+Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output "WARNING: sun.reflect.Reflection.getCallerClass is not supported.`nCode signed successfully: wispterm.exe" -SignedFilesPresent $true -TimedOut $false) 'success' 'JVM warning does not hide success'
 Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output 'Error: invalid otp' -SignedFilesPresent $false -TimedOut $true) 'fail' 'timeout is not an otp retry'
-Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output "Error: bad credential`nBatch sign command executed successfully" -SignedFilesPresent $true -TimedOut $false) 'fail' 'Error: wins over the success marker'
+Assert-Equal (Get-CodeSignDisposition -ExitCode 0 -Output "Error: bad credential`nCode signed successfully: wispterm.exe" -SignedFilesPresent $true -TimedOut $false) 'fail' 'Error: wins over the success marker'
 
 $formatted = Format-CodeSignFailure -Result @{ ExitCode = 0; StdOut = 'Error: nope'; StdErr = 'err-marker'; TimedOut = $false } -LogText 'log-marker' -SignedFilesPresent $false
 Assert-Contains $formatted 'did not write a signed copy' 'missing file names the useless failure mode'
@@ -278,12 +278,21 @@ $run = {
             TimedOut = $false
         }
     }
-    if ($script:fakeMode -eq 'success') {
-        New-Item -ItemType Directory -Path $signedDir -Force | Out-Null
-        [IO.File]::WriteAllText((Join-Path $signedDir '000-wispterm.exe'), 'signed-bytes')
+    if ($script:fakeMode -eq 'scan-required') {
         return @{
             ExitCode = 0
-            StdOut = 'Batch sign command executed successfully'
+            StdOut = 'Error: hash needs to be scanned first before submitting for signing: abc='
+            StdErr = ''
+            TimedOut = $false
+        }
+    }
+    if ($script:fakeMode -eq 'success') {
+        if ($ArgumentList -contains 'sign') { $script:usedSign = $true }
+        New-Item -ItemType Directory -Path $signedDir -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $signedDir 'wispterm.exe'), 'signed-bytes')
+        return @{
+            ExitCode = 0
+            StdOut = 'Code signed successfully: wispterm.exe'
             StdErr = ''
             TimedOut = $false
         }
@@ -296,15 +305,19 @@ $run = {
     }
 }
 
-function Invoke-FakeBatch {
+$inputFile = Join-Path $inputDir 'wispterm.exe'
+Set-Content -Path $inputFile -Value 'unsigned' -Encoding ascii
+$script:usedSign = $false
+
+function Invoke-FakeSign {
     [IO.File]::WriteAllText($countPath, '0')
-    Invoke-CodeSignToolBatch -Tool $tool -InputDir $inputDir -OutputDir $outputDir -ExpectedNames @('000-wispterm.exe') -OtpRetrySeconds 0 -TimeoutSeconds 30 -RunProcess $run
+    Invoke-CodeSignToolSign -Tool $tool -InputFile $inputFile -OutputDir $outputDir -OtpRetrySeconds 0 -TimeoutSeconds 30 -RunProcess $run
 }
 
 $script:fakeMode = 'auth-error'
 $authMessage = ''
 try {
-    Invoke-FakeBatch
+    Invoke-FakeSign
     $authMessage = 'expected auth failure'
 } catch {
     $authMessage = [string]$_.Exception.Message
@@ -318,14 +331,14 @@ Assert-Contains $authMessage '[ESIGNER_PASSWORD]' 'exit 0 auth failure redacts t
 Assert-Contains $authMessage '[ESIGNER_CREDENTIAL_ID]' 'exit 0 auth failure redacts the credential id' $sampleSecrets
 Assert-SecretHidden $authMessage $sampleSecrets 'auth failure output hides secrets'
 Assert-True $script:passwordArgOk 'password is passed as one argument'
-Assert-True (-not $script:pinPassed) 'pin stays off the batch_sign command line'
+Assert-True (-not $script:pinPassed) 'pin stays off the sign command line'
 Assert-Equal ([IO.File]::ReadAllText($countPath).Trim()) '1' 'auth failure does not retry'
 
 $script:fakeMode = 'invalid-otp'
 $otpStarted = [Diagnostics.Stopwatch]::StartNew()
 $otpMessage = ''
 try {
-    Invoke-FakeBatch
+    Invoke-FakeSign
     $otpMessage = 'expected otp failure'
 } catch {
     $otpMessage = [string]$_.Exception.Message
@@ -336,10 +349,23 @@ Assert-Contains $otpMessage 'Error: invalid otp' 'final otp failure includes the
 Assert-SecretHidden $otpMessage $sampleSecrets 'otp failure output hides secrets'
 Assert-True ($otpStarted.Elapsed.TotalSeconds -lt 5) 'tests do not wait out the TOTP window'
 
+$script:fakeMode = 'scan-required'
+$scanMessage = ''
+try {
+    Invoke-FakeSign
+    $scanMessage = 'expected scan failure'
+} catch {
+    $scanMessage = [string]$_.Exception.Message
+}
+Assert-Contains $scanMessage 'hash needs to be scanned first' 'malware-blocker rejection fails with the tool error' $sampleSecrets
+Assert-Equal ([IO.File]::ReadAllText($countPath).Trim()) '1' 'malware-blocker rejection does not retry'
+
 $script:fakeMode = 'success'
-Invoke-FakeBatch
-Assert-Equal ([IO.File]::ReadAllText((Join-Path $outputDir '000-wispterm.exe'))) 'signed-bytes' 'success leaves the signed file in place'
+$signedPath = Invoke-FakeSign
+Assert-Equal $signedPath (Join-Path $outputDir 'wispterm.exe') 'success returns the signed copy path'
+Assert-Equal ([IO.File]::ReadAllText($signedPath)) 'signed-bytes' 'success leaves the signed file in place'
 Assert-Equal ([IO.File]::ReadAllText($countPath).Trim()) '1' 'success does not retry'
+Assert-True $script:usedSign 'signing uses the per-file sign command'
 
 foreach ($name in $script:SecretNames) {
     [Environment]::SetEnvironmentVariable($name, $savedSecrets[$name])
