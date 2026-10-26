@@ -215,7 +215,9 @@ jobs:
           ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
           ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
         run: |
-          powershell -ExecutionPolicy Bypass -File .\packaging\windows\sign-esigner.ps1 -DistRoot .\zig-out\dist -Require
+          # PowerShell 7. ProcessStartInfo.ArgumentList keeps each eSigner
+          # secret as one argument. Windows PowerShell 5.1 has no ArgumentList.
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\sign-esigner.ps1 -DistRoot .\zig-out\dist -Require
 
       - name: Create release assets
         shell: pwsh

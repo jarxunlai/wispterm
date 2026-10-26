@@ -18,9 +18,18 @@
 # ("timestamp certificate does not meet a minimum public key length"). This
 # script pins TSA_URL to http://ts.ssl.com/legacy, SSL.com's RFC3161 RSA
 # timestamp authority.
+#
+# CodeSignTool 1.3.2 main() discards picocli's exit code, so java exits 0 on
+# auth errors, invalid OTPs, and bad arguments. Success is exit 0, the
+# "Batch sign command executed successfully" marker, no Error:/exception text,
+# and every staged file. An invalid OTP is retried into the next TOTP window
+# even when the process exits 0. Failures print sanitized stdout, stderr, and
+# logs/code_signing_tool.log.
 
 param(
-    [Parameter(Mandatory = $true)][string]$DistRoot,
+    # Not Mandatory: packaging/windows/sign-esigner.test.ps1 dot-sources this
+    # file to call the functions. The entry point still requires -DistRoot.
+    [string]$DistRoot,
     [switch]$Require,
     [switch]$ListOnly
 )
@@ -43,6 +52,11 @@ $script:SecretNames = @(
     'ESIGNER_TOTP_SECRET',
     'ESIGNER_PIN'
 )
+# 35s leaves the current 30s TOTP window. One tag job signs every bundle, so
+# there is no second slot to stagger.
+$script:OtpRetryDelaySeconds = 35
+$script:OtpAttemptLimit = 4
+$script:CodeSignTimeoutSeconds = 900
 
 function Get-SecretValue {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -63,11 +77,17 @@ function Redact-Text {
     param([AllowNull()][string]$Text)
     if ([string]::IsNullOrEmpty($Text)) { return '' }
     $redacted = $Text
+    # Longer values first so a short secret that is a substring of another
+    # secret cannot split the longer one and leave the rest visible.
+    $named = New-Object System.Collections.Generic.List[object]
     foreach ($name in @('ESIGNER_PASSWORD', 'ESIGNER_TOTP_SECRET', 'ESIGNER_USERNAME', 'ESIGNER_CREDENTIAL_ID')) {
         $secret = [Environment]::GetEnvironmentVariable($name)
         if (-not [string]::IsNullOrEmpty($secret)) {
-            $redacted = $redacted.Replace($secret, '[' + $name + ']')
+            $named.Add([pscustomobject]@{ Name = $name; Value = $secret })
         }
+    }
+    foreach ($entry in @($named | Sort-Object { $_.Value.Length } -Descending)) {
+        $redacted = $redacted.Replace($entry.Value, '[' + $entry.Name + ']')
     }
     $pin = [Environment]::GetEnvironmentVariable('ESIGNER_PIN')
     if (-not [string]::IsNullOrEmpty($pin)) {
@@ -187,55 +207,266 @@ function Install-CodeSignTool {
     return @{ Java = $java; Jar = $jar; Properties = $props; Root = $Destination }
 }
 
+function ConvertTo-WindowsProcessArgument {
+    param([AllowNull()][string]$Argument)
+    if ([string]::IsNullOrEmpty($Argument)) { return '""' }
+    $needsQuote = $Argument.IndexOfAny([char[]]@(' ', "`t", '"')) -ge 0
+    if (-not $needsQuote) { return $Argument }
+
+    # CommandLineToArgvW quoting. PowerShell 7 passes ArgumentList instead.
+    # Windows PowerShell 5.1 only has ProcessStartInfo.Arguments.
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    $backslashes = 0
+    foreach ($ch in $Argument.ToCharArray()) {
+        if ($ch -eq '\') {
+            $backslashes++
+            continue
+        }
+        if ($ch -eq '"') {
+            for ($i = 0; $i -lt (($backslashes * 2) + 1); $i++) { [void]$sb.Append('\') }
+            [void]$sb.Append('"')
+            $backslashes = 0
+            continue
+        }
+        for ($i = 0; $i -lt $backslashes; $i++) { [void]$sb.Append('\') }
+        $backslashes = 0
+        [void]$sb.Append($ch)
+    }
+    for ($i = 0; $i -lt ($backslashes * 2); $i++) { [void]$sb.Append('\') }
+    [void]$sb.Append('"')
+    return $sb.ToString()
+}
+
+function Invoke-CapturedProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [string[]]$ArgumentList = @(),
+        [string]$WorkingDirectory,
+        [hashtable]$Environment,
+        [int]$TimeoutSeconds = 900
+    )
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FileName
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.RedirectStandardInput = $true
+    $psi.CreateNoWindow = $true
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $psi.StandardOutputEncoding = $utf8
+    $psi.StandardErrorEncoding = $utf8
+    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        $psi.WorkingDirectory = $WorkingDirectory
+    }
+    if ($null -ne $psi.PSObject.Properties['ArgumentList']) {
+        foreach ($arg in $ArgumentList) {
+            [void]$psi.ArgumentList.Add([string]$arg)
+        }
+    } else {
+        $quoted = New-Object System.Collections.Generic.List[string]
+        foreach ($arg in $ArgumentList) {
+            $quoted.Add((ConvertTo-WindowsProcessArgument $arg))
+        }
+        $psi.Arguments = ($quoted -join ' ')
+    }
+    if ($Environment) {
+        foreach ($key in @($Environment.Keys)) {
+            $psi.Environment[[string]$key] = [string]$Environment[$key]
+        }
+    }
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+    [void]$process.Start()
+    $process.StandardInput.Close()
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+    if ($timedOut) {
+        try {
+            $process.Kill($true)
+        } catch {
+            try { $process.Kill() } catch {}
+        }
+        $process.WaitForExit()
+    } else {
+        # WaitForExit(int) can return before the async readers finish.
+        $process.WaitForExit()
+    }
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+    $code = if ($timedOut) { 124 } else { $process.ExitCode }
+    return @{
+        ExitCode = $code
+        StdOut = [string]$stdout
+        StdErr = [string]$stderr
+        TimedOut = [bool]$timedOut
+    }
+}
+
+function Get-CodeSignDisposition {
+    param(
+        [int]$ExitCode,
+        [string]$Output,
+        [bool]$SignedFilesPresent,
+        [bool]$TimedOut
+    )
+    if ($TimedOut) { return 'fail' }
+    $text = [string]$Output
+    if ($text -match '(?i)invalid\s+otp' -or $text -match '(?i)otp\s+is\s+invalid') {
+        return 'retry-otp'
+    }
+    $hasError = $text -match '(?im)(^|\s)Error\s*:' -or $text -match '(?i)(\bException\b|java\.lang\.)'
+    $hasSuccess = $text -match 'Batch sign command executed successfully'
+    if ($ExitCode -eq 0 -and $SignedFilesPresent -and $hasSuccess -and -not $hasError) {
+        return 'success'
+    }
+    return 'fail'
+}
+
+function Trim-DiagnosticText {
+    param([AllowNull()][string]$Text, [int]$Max = 16384)
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    if ($Text.Length -le $Max) { return $Text }
+    return "(truncated to last $Max characters)`n" + $Text.Substring($Text.Length - $Max)
+}
+
+function Format-CapturedOutput {
+    param(
+        $Result,
+        [string]$LogText
+    )
+    $parts = New-Object System.Collections.Generic.List[string]
+    if ($Result.TimedOut) {
+        $parts.Add('CodeSignTool timed out.')
+    }
+    # Redact before trimming so a secret that crosses the cut is already gone.
+    if (-not [string]::IsNullOrWhiteSpace($Result.StdOut)) {
+        $parts.Add("stdout:`n$((Trim-DiagnosticText (Redact-Text $Result.StdOut)).TrimEnd())")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Result.StdErr)) {
+        $parts.Add("stderr:`n$((Trim-DiagnosticText (Redact-Text $Result.StdErr)).TrimEnd())")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LogText)) {
+        $parts.Add("log:`n$((Trim-DiagnosticText (Redact-Text $LogText)).TrimEnd())")
+    }
+    if ($parts.Count -eq 0) {
+        return '(no stdout, stderr, or log)'
+    }
+    return ($parts -join "`n")
+}
+
+function Read-CodeSignToolLog {
+    param([Parameter(Mandatory = $true)][string]$ToolRoot)
+    $logPath = Join-Path (Join-Path $ToolRoot 'logs') 'code_signing_tool.log'
+    if (-not (Test-Path -LiteralPath $logPath)) { return '' }
+    try {
+        return [IO.File]::ReadAllText($logPath)
+    } catch {
+        return ''
+    }
+}
+
+function Clear-CodeSignToolLog {
+    param([Parameter(Mandatory = $true)][string]$ToolRoot)
+    $logDir = Join-Path $ToolRoot 'logs'
+    if (Test-Path -LiteralPath $logDir) {
+        Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-ExpectedSignedFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDir,
+        [Parameter(Mandatory = $true)][string[]]$ExpectedNames
+    )
+    if ($ExpectedNames.Count -lt 1) { return $false }
+    foreach ($name in $ExpectedNames) {
+        if (-not (Test-Path -LiteralPath (Join-Path $OutputDir $name) -PathType Leaf)) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Format-CodeSignFailure {
+    param(
+        $Result,
+        [string]$LogText,
+        [bool]$SignedFilesPresent
+    )
+    $reason = if ($Result.TimedOut) {
+        'timed out'
+    } elseif (-not $SignedFilesPresent) {
+        'did not write a signed copy'
+    } else {
+        'rejected the signed result'
+    }
+    $body = Format-CapturedOutput -Result $Result -LogText $LogText
+    return "CodeSignTool batch_sign failed ($reason, exit $($Result.ExitCode)).`n$body"
+}
+
 function Invoke-CodeSignToolBatch {
     param(
         [Parameter(Mandatory = $true)]$Tool,
         [Parameter(Mandatory = $true)][string]$InputDir,
-        [Parameter(Mandatory = $true)][string]$OutputDir
+        [Parameter(Mandatory = $true)][string]$OutputDir,
+        [Parameter(Mandatory = $true)][string[]]$ExpectedNames,
+        [int]$OtpRetrySeconds = 35,
+        [int]$TimeoutSeconds = 900,
+        # Tests substitute the process. Production starts the bundled java.
+        [scriptblock]$RunProcess
     )
-    if (Test-Path -LiteralPath $OutputDir) {
-        Remove-Item -LiteralPath $OutputDir -Recurse -Force
-    }
+    $ErrorActionPreference = 'Stop'
+    for ($attempt = 1; $attempt -le $script:OtpAttemptLimit; $attempt++) {
+        if (Test-Path -LiteralPath $OutputDir) {
+            Remove-Item -LiteralPath $OutputDir -Recurse -Force
+        }
+        Clear-CodeSignToolLog -ToolRoot $Tool.Root
 
-    # batch_sign refuses an output directory that already exists and reads
-    # ./conf/code_sign_tool.properties from the process working directory.
-    $signArgs = @(
-        '-jar', $Tool.Jar,
-        'batch_sign',
-        "-username=$(Get-SecretValue 'ESIGNER_USERNAME')",
-        "-password=$(Get-SecretValue 'ESIGNER_PASSWORD')",
-        "-credential_id=$(Get-SecretValue 'ESIGNER_CREDENTIAL_ID')",
-        "-totp_secret=$(Get-SecretValue 'ESIGNER_TOTP_SECRET')",
-        "-input_dir_path=$InputDir",
-        "-output_dir_path=$OutputDir"
-    )
-    $log = Join-Path ([IO.Path]::GetTempPath()) ("codesigntool-" + [guid]::NewGuid().ToString('N') + '.log')
-    Push-Location $Tool.Root
-    try {
-        & $Tool.Java @signArgs *> $log
-        $exitCode = $LASTEXITCODE
-    } finally {
-        Pop-Location
+        # batch_sign refuses an output directory that already exists and reads
+        # ./conf/code_sign_tool.properties from the process working directory.
+        # Each secret is its own argument so quotes, spaces, and a trailing
+        # backslash survive. Stdin is closed so an OTP prompt cannot hang.
+        $signArgs = @(
+            '-jar', $Tool.Jar,
+            'batch_sign',
+            "-username=$(Get-SecretValue 'ESIGNER_USERNAME')",
+            "-password=$(Get-SecretValue 'ESIGNER_PASSWORD')",
+            "-credential_id=$(Get-SecretValue 'ESIGNER_CREDENTIAL_ID')",
+            "-totp_secret=$(Get-SecretValue 'ESIGNER_TOTP_SECRET')",
+            "-input_dir_path=$InputDir",
+            "-output_dir_path=$OutputDir"
+        )
+        if ($null -ne $RunProcess) {
+            $result = & $RunProcess $signArgs $Tool.Root
+        } else {
+            $result = Invoke-CapturedProcess -FileName $Tool.Java -ArgumentList $signArgs -WorkingDirectory $Tool.Root -TimeoutSeconds $TimeoutSeconds
+        }
+        if ($null -eq $result) { throw 'CodeSignTool process returned no result.' }
+
+        $logText = Read-CodeSignToolLog -ToolRoot $Tool.Root
+        $toolText = @($result.StdOut, $result.StdErr, $logText) -join "`n"
+        $signedPresent = Test-ExpectedSignedFiles -OutputDir $OutputDir -ExpectedNames $ExpectedNames
+        $disposition = Get-CodeSignDisposition -ExitCode $result.ExitCode -Output $toolText -SignedFilesPresent $signedPresent -TimedOut $result.TimedOut
+        if ($disposition -eq 'success') {
+            Write-Host "CodeSignTool batch_sign completed for $($ExpectedNames.Count) files."
+            return
+        }
+
+        $failure = Redact-Text (Format-CodeSignFailure -Result $result -LogText $logText -SignedFilesPresent $signedPresent)
+        if ($disposition -eq 'retry-otp' -and $attempt -lt $script:OtpAttemptLimit) {
+            Write-Host "eSigner rejected the one-time password (attempt $attempt/$($script:OtpAttemptLimit)). Waiting ${OtpRetrySeconds}s for the next TOTP window."
+            Write-Host $failure
+            if ($OtpRetrySeconds -gt 0) {
+                Start-Sleep -Seconds $OtpRetrySeconds
+            }
+            continue
+        }
+        throw $failure
     }
-    $raw = ''
-    if (Test-Path -LiteralPath $log) {
-        $raw = [IO.File]::ReadAllText($log)
-        Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
-    }
-    $redacted = Redact-Text $raw
-    if ($redacted.Length -gt 4000) {
-        $redacted = $redacted.Substring($redacted.Length - 4000)
-    }
-    Write-Host $redacted
-    if ($exitCode -ne 0) {
-        throw "CodeSignTool batch_sign failed with exit code $exitCode."
-    }
-    if ($raw -notmatch 'Batch sign command executed successfully') {
-        throw 'CodeSignTool batch_sign exited 0 without a success marker.'
-    }
-    if ($raw -match '(?im)(^|\s)Error:') {
-        throw 'CodeSignTool reported an error while signing.'
-    }
+    throw 'CodeSignTool batch_sign failed.'
 }
 
 function Assert-AuthenticodeSigned {
@@ -252,6 +483,11 @@ function Assert-AuthenticodeSigned {
     Write-Host "Signed $Path"
     Write-Host "  signer: $signer"
     Write-Host "  timestamp: $stamped"
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+if ([string]::IsNullOrWhiteSpace($DistRoot)) {
+    throw 'DistRoot is required. Pass -DistRoot <zig-out/dist>.'
 }
 
 if (-not $ListOnly) {
@@ -301,7 +537,8 @@ try {
     }
 
     Write-Host "Signing $($staged.Count) first-party binaries with CodeSignTool $($script:CodeSignToolVersion)"
-    Invoke-CodeSignToolBatch -Tool $tool -InputDir $stage -OutputDir $signed
+    [string[]]$expectedNames = @(foreach ($entry in $staged) { $entry.StagedName })
+    Invoke-CodeSignToolBatch -Tool $tool -InputDir $stage -OutputDir $signed -ExpectedNames $expectedNames -OtpRetrySeconds $script:OtpRetryDelaySeconds -TimeoutSeconds $script:CodeSignTimeoutSeconds
 
     foreach ($entry in $staged) {
         $signedFile = Join-Path $signed $entry.StagedName
@@ -337,3 +574,4 @@ foreach ($entry in $staged) {
 }
 
 Write-Host "Authenticode verification passed for $($staged.Count) files. Zip archives were not signed."
+}

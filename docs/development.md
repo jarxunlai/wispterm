@@ -659,8 +659,18 @@ with SSL.com eSigner instead.
 
 `packaging/windows/sign-esigner.ps1` downloads CodeSignTool 1.3.2 and runs
 `batch_sign`. CodeSignTool sends file hashes to eSigner and writes an
-Authenticode signature. One OTP covers the batch. The PE signer timestamps
-with `TSA_URL` as an RFC3161 (`SPC_RFC3161`) attribute. The script sets that
+Authenticode signature. One OTP covers the batch. CodeSignTool 1.3.2's Java
+`main` discards picocli's exit code, so `java -jar ... batch_sign` exits 0 on
+authentication errors, invalid OTPs, and bad arguments. The script accepts the
+batch only when that process exits 0, the combined stdout, stderr, and
+`logs/code_signing_tool.log` contain `Batch sign command executed successfully`,
+that text does not contain `Error:` or an exception, and every staged file was
+written. A failure prints those streams with the eSigner secret values removed.
+An invalid OTP is retried up to four times, waiting 35 seconds so the next try
+is in a later TOTP window, including when the process exits 0. The tag job
+runs the script with PowerShell 7 so each secret stays one process argument.
+The PE signer timestamps with `TSA_URL` as an RFC3161 (`SPC_RFC3161`)
+attribute. The script sets that
 to `http://ts.ssl.com/legacy`, SSL.com's RSA timestamp authority. The default
 `http://ts.ssl.com` endpoint issues ECDSA timestamps, and Windows rejects
 those timestamp certificates when the key is shorter than its minimum.
