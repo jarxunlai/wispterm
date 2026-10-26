@@ -11,6 +11,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ghostty_vt = @import("ghostty-vt");
+const build_options = @import("build_options");
 const Pty = @import("pty.zig").Pty;
 const Command = @import("Command.zig");
 const renderer = @import("renderer.zig");
@@ -144,6 +145,18 @@ pub const VtHandler = struct {
     /// The inner readonly handler type, obtained via Terminal.vtHandler's return type.
     const InnerHandler = @typeInfo(@TypeOf(ghostty_vt.Terminal.vtHandler)).@"fn".return_type.?;
 
+    /// ghostty-vt's device-attributes reply type, derived from the effect
+    /// callback signature so it tracks the dependency without a re-export.
+    const DeviceAttributes = blk: {
+        const Fn = @typeInfo(@FieldType(InnerHandler.Effects, "device_attributes")).optional.child;
+        break :blk @typeInfo(@typeInfo(Fn).pointer.child).@"fn".return_type.?;
+    };
+
+    /// XTVERSION (`CSI > 0 q`) reply. Identifies the real emulator; apps that
+    /// branch on this string (VTE/xterm.js workarounds) must not mistake us
+    /// for those.
+    const xtversion_string = "WispTerm " ++ build_options.app_version;
+
     inner: InnerHandler,
     surface: *Surface,
 
@@ -155,10 +168,28 @@ pub const VtHandler = struct {
         // and, without a reply, conclude it is unsupported and never enable it —
         // leaving Shift+Enter indistinguishable from Enter. See issue #302.
         inner.effects.write_pty = &writePtyResponse;
+        // Primary/secondary/tertiary device attributes (`CSI c`, `CSI > c`,
+        // `CSI = c`). ghostty-vt's readonly handler leaves this effect null, so
+        // DA1 went unanswered. TUIs that probe `CSI ? u` + `CSI c` together
+        // (grok) treat the Kitty reply as proof the terminal responds and then
+        // wait for DA1 without a timeout — a blank alternate screen forever.
+        // Newer Windows pseudo-console hosts also send DA1 to the terminal
+        // hosting them and gate scroll optimizations on the reply. Same answer as Ghostty's
+        // termio/stream_handler.zig: `CSI ? 62 ; 22 c` (VT220 + ANSI color).
+        inner.effects.device_attributes = &deviceAttributes;
+        inner.effects.xtversion = &xtversion;
         return .{
             .inner = inner,
             .surface = surface,
         };
+    }
+
+    fn deviceAttributes(_: *InnerHandler) DeviceAttributes {
+        return .{};
+    }
+
+    fn xtversion(_: *InnerHandler) []const u8 {
+        return xtversion_string;
     }
 
     /// Forward a terminal-generated response (Kitty keyboard query, DSR, mode
@@ -1940,6 +1971,41 @@ test "kitty keyboard query is answered back to the PTY (issue #302)" {
     surface.vt_stream.nextSlice("\x1b[>1u");
     surface.vt_stream.nextSlice("\x1b[?u");
     try expectPtyResponse(&surface, "\x1b[?1u");
+}
+
+test "primary device attributes query is answered back to the PTY" {
+    var surface: Surface = undefined;
+    try vtResponseHarness(&surface);
+    defer vtResponseHarnessDeinit(&surface);
+
+    // grok sends `CSI ? u` then `CSI c` and, once the Kitty reply proves the
+    // terminal answers queries, waits for DA1 with no timeout. Without this
+    // reply it sits on a blank alternate screen forever.
+    surface.vt_stream.nextSlice("\x1b[?u\x1b[c");
+    try expectPtyResponse(&surface, "\x1b[?0u");
+    try expectPtyResponse(&surface, "\x1b[?62;22c");
+
+    // Secondary DA (`CSI > c`) is part of the same probe family and must not
+    // stay silent either.
+    surface.vt_stream.nextSlice("\x1b[>c");
+    const msg = surface.mailbox.popWrite() orelse return error.NoPtyResponse;
+    switch (msg) {
+        .write_small => |*w| {
+            const reply = w.data[0..w.len];
+            try std.testing.expect(std.mem.startsWith(u8, reply, "\x1b[>"));
+            try std.testing.expect(std.mem.endsWith(u8, reply, "c"));
+        },
+        else => return error.UnexpectedMessage,
+    }
+}
+
+test "XTVERSION query reports WispTerm and its version" {
+    var surface: Surface = undefined;
+    try vtResponseHarness(&surface);
+    defer vtResponseHarnessDeinit(&surface);
+
+    surface.vt_stream.nextSlice("\x1b[>0q");
+    try expectPtyResponse(&surface, "\x1bP>|WispTerm " ++ build_options.app_version ++ "\x1b\\");
 }
 
 // queuePtyWrite needs surface.allocator, surface.mailbox, and the IO lifecycle
