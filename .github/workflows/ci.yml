@@ -147,6 +147,17 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File .\packaging\windows\sign-esigner.test.ps1
 
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      # Builds the setup exe from a stub payload, installs it silently into a
+      # temp folder, checks the shortcut and Add/Remove Programs entry, then
+      # uninstalls silently. No zig build involved.
+      - name: Installer silent install and uninstall
+        shell: pwsh
+        run: pwsh -NoProfile -File .\packaging\windows\installer\installer.test.ps1
+
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2

@@ -191,6 +191,19 @@ $required = Invoke-Signer -ArgumentList @('-DistRoot', $dist, '-Require') -Envir
 Assert-Equal $required.ExitCode 1 'tag signing still requires every eSigner secret'
 Assert-Contains ($required.StdOut + $required.StdErr) 'ESIGNER_CREDENTIAL_ID' 'missing secret failure names the secret'
 
+$setupExe = Join-Path $dist 'wispterm-windows-setup-v0.0.0.exe'
+Set-Content -Path $setupExe -Value 'installer' -Encoding ascii
+$fileListed = Invoke-Signer -ArgumentList @('-File', $setupExe, '-ListOnly') -Environment $emptySecrets
+Assert-Equal $fileListed.ExitCode 0 'File mode ListOnly exits 0 without eSigner secrets'
+Assert-Contains $fileListed.StdOut 'wispterm-windows-setup-v0.0.0.exe' 'File mode lists the setup exe'
+$fileRequired = Invoke-Signer -ArgumentList @('-File', $setupExe, '-Require') -Environment $emptySecrets
+Assert-Equal $fileRequired.ExitCode 1 'File mode still requires every eSigner secret'
+$bothModes = Invoke-Signer -ArgumentList @('-File', $setupExe, '-DistRoot', $dist, '-ListOnly') -Environment $emptySecrets
+Assert-Equal $bothModes.ExitCode 1 'DistRoot and File together are refused'
+$missingFile = Invoke-Signer -ArgumentList @('-File', (Join-Path $dist 'absent.exe'), '-ListOnly') -Environment $emptySecrets
+Assert-Equal $missingFile.ExitCode 1 'a missing File target fails'
+Assert-Contains ($missingFile.StdOut + $missingFile.StdErr) 'Sign target not found' 'a missing File target is named'
+
 $script:samplePassword = 'P!@^^ss word"12\'
 $script:sampleUser = 'signer-user'
 $script:sampleCred = 'cred-id-9f3a'

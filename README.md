@@ -141,6 +141,11 @@ Options:
 
 Configuration file details are in [Configuration](docs/configuration.md).
 
+On Windows, download `wispterm-windows-setup-vX.Y.Z.exe` from the
+[releases page](https://github.com/xuzhougeng/wispterm/releases) for a
+per-user install (Start menu shortcut, Add/Remove Programs entry), or a
+portable zip to run from any folder. Both are signed and both update in place.
+
 Windows builds include an optional **Open in WispTerm** Explorer context menu for folders and folder backgrounds. Enable it with `Add-Context-Menu.cmd` from a trusted signed bundle; use `Remove-Context-Menu.cmd` to remove it. See [Windows context menu setup](docs/windows-context-menu.md) for signing requirements and installation details.
 
 ## Keyboard shortcuts

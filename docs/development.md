@@ -570,11 +570,33 @@ WispTerm supports three portable Windows packages:
 - `portable-compat` - native D3D11 build for older Windows 10 machines: `WebView2Loader.dll` for the embedded browser plus a bundled modern ConPTY (`conpty.dll` + `OpenConsole.exe`) so TUI apps like Codex get mouse scrolling and scrollbars on old inbox conhosts
 - `portable-opengl` - renderer fallback for systems where native D3D11 cannot start or render correctly
 
+and, since v1.45.0, a per-user installer built from the `portable` tree:
+
+- `installer\wispterm-windows-setup-vX.Y.Z.exe` - NSIS setup
+  (`packaging/windows/installer/wispterm.nsi`) that installs the same files as
+  the portable zip into `%LOCALAPPDATA%\Programs\WispTerm`, writes the Start
+  menu shortcut `replace-install.ps1` also uses, adds an Add/Remove Programs
+  entry, and optionally registers the Explorer context menu. `/S` installs
+  silently, `/D=<dir>` picks the folder (last argument, unquoted), `/MENU` and
+  `/DESKTOP` select the optional components. Its uninstaller runs the shipped
+  `uninstall.ps1`, so removal logic lives in one place and the user's
+  configuration and plugins stay. citebox ships Windows the same way; Ghostty
+  has no Windows packaging to compare with.
+
 Build the artifacts with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\packaging\windows\package.ps1
+powershell -ExecutionPolicy Bypass -File .\packaging\windows\build-installer.ps1 -Version v1.45.0
 ```
+
+`build-installer.ps1` needs NSIS 3 (`choco install nsis`; it looks on `PATH`,
+under `Program Files\NSIS`, and in the Chocolatey lib folder). On a tag
+release it runs after `sign-esigner.ps1` has signed the portable tree, so the
+embedded binaries keep their signatures; the setup exe is then signed with
+`sign-esigner.ps1 -File`. `installer/installer.test.ps1` builds the setup from
+a stub payload and silently installs and uninstalls it; CI's Windows smoke job
+runs it.
 
 Tag releases then Authenticode-sign the first-party binaries in those dist
 folders **before** the zip archives are created. See
@@ -595,6 +617,7 @@ zig-out\dist\portable-compat\plugins\...
 zig-out\dist\portable-opengl\wispterm.exe
 zig-out\dist\portable-opengl\version.txt
 zig-out\dist\portable-opengl\plugins\...
+zig-out\dist\installer\wispterm-windows-setup-vX.Y.Z.exe
 ```
 
 The portable app can add or remove its native Start menu shortcut and enable or
@@ -638,11 +661,13 @@ Several GitHub Actions workflows publish release assets whenever a tag matching
 - `wispterm-windows-portable-compat-vX.Y.Z.zip`
 - `wispterm-windows-portable-opengl-vX.Y.Z.zip`
 - `wispterm-windows-debug-vX.Y.Z.zip`
+- `wispterm-windows-setup-vX.Y.Z.exe`
 
 The tag workflow (`.github/workflows/windows-release.yml`) signs
 `wispterm.exe`, `wispterm-ssh-askpass.exe`, and `wispterm-shell-extension.dll`
-in each of those folders with SSL.com eSigner, then zips the folders. The zip
-archives are not signed. A missing eSigner secret or a failed signature fails
+in each of those folders with SSL.com eSigner, then zips the folders and
+builds the installer from the signed `portable` tree and signs that setup exe
+too (`sign-esigner.ps1 -File`). The zip archives are not signed. A missing eSigner secret or a failed signature fails
 the tag release before any zip is uploaded. Manual debug builds
 (`windows-debug.yml`) and the Windows beta workflow do not sign.
 

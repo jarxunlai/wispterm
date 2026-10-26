@@ -128,6 +128,11 @@ wispterm [options]
 
 配置文件细节见[配置](docs/configuration.md)。
 
+Windows 用户可从 [Releases](https://github.com/xuzhougeng/wispterm/releases)
+下载 `wispterm-windows-setup-vX.Y.Z.exe` 安装到当前用户（带开始菜单快捷方式和
+“应用和功能”条目），也可以下载便携 zip 解压到任意目录运行。两者都已签名，
+都支持原地自动更新。
+
 Windows 版本支持可选的 **在 WispTerm 中打开** 文件夹右键菜单（含文件夹空白区域）。在附带受信任签名身份包的发行版中运行 `Add-Context-Menu.cmd` 启用，运行 `Remove-Context-Menu.cmd` 移除。签名要求和安装说明见 [Windows 右键菜单](docs/windows-context-menu.md)。
 
 ## 键盘快捷键

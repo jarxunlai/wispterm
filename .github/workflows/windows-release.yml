@@ -219,6 +219,31 @@ jobs:
           # secret as one argument. Windows PowerShell 5.1 has no ArgumentList.
           pwsh -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\sign-esigner.ps1 -DistRoot .\zig-out\dist -Require
 
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      # Wraps the signed portable tree, so the payload keeps its signatures;
+      # only the setup exe itself still needs one.
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\build-installer.ps1 -PayloadDir .\zig-out\dist\portable -OutputDir .\zig-out\dist\installer -Version "${{ github.ref_name }}"
+          $setup = "zig-out\dist\installer\wispterm-windows-setup-${{ github.ref_name }}.exe"
+          if (!(Test-Path $setup)) { throw "Installer not found: $setup" }
+
+      - name: Sign Windows installer with SSL.com eSigner
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+          ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+          ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+          ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+          ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\sign-esigner.ps1 -File ".\zig-out\dist\installer\wispterm-windows-setup-${{ github.ref_name }}.exe" -Require
+
       - name: Create release assets
         shell: pwsh
         run: |
@@ -227,6 +252,7 @@ jobs:
           $portableCompatAsset = "wispterm-windows-portable-compat-$tag.zip"
           $portableOpenGLAsset = "wispterm-windows-portable-opengl-$tag.zip"
           $debugAsset = "wispterm-windows-debug-$tag.zip"
+          $setupAsset = "wispterm-windows-setup-$tag.exe"
 
           if (Test-Path $portableAsset) {
             Remove-Item $portableAsset -Force
@@ -238,6 +264,7 @@ jobs:
             Remove-Item $portableOpenGLAsset -Force
           }
           if (Test-Path $debugAsset) { Remove-Item $debugAsset -Force }
+          if (Test-Path $setupAsset) { Remove-Item $setupAsset -Force }
 
           # Executables and DLLs inside these directories are already signed.
           # Do not Authenticode-sign the zip archives.
@@ -245,6 +272,8 @@ jobs:
           Compress-Archive -Path zig-out\dist\portable-compat\* -DestinationPath $portableCompatAsset -Force
           Compress-Archive -Path zig-out\dist\portable-opengl\* -DestinationPath $portableOpenGLAsset -Force
           Compress-Archive -Path zig-out\dist\portable-debug\* -DestinationPath $debugAsset -Force
+          # Already signed in place; just give it the release asset name.
+          Copy-Item "zig-out\dist\installer\$setupAsset" $setupAsset -Force
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -274,6 +303,13 @@ jobs:
           path: wispterm-windows-debug-${{ github.ref_name }}.zip
           if-no-files-found: error
 
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wispterm-windows-setup-${{ github.ref_name }}
+          path: wispterm-windows-setup-${{ github.ref_name }}.exe
+          if-no-files-found: error
+
       - name: Publish GitHub release
         shell: pwsh
         env:
@@ -284,6 +320,7 @@ jobs:
           $portableCompatAsset = "wispterm-windows-portable-compat-$tag.zip"
           $portableOpenGLAsset = "wispterm-windows-portable-opengl-$tag.zip"
           $debugAsset = "wispterm-windows-debug-$tag.zip"
+          $setupAsset = "wispterm-windows-setup-$tag.exe"
 
           if (!(Test-Path $portableAsset)) {
             throw "Portable release asset not found: $portableAsset"
@@ -297,14 +334,18 @@ jobs:
           if (!(Test-Path $debugAsset)) {
             throw "Diagnostic release asset not found: $debugAsset"
           }
+          if (!(Test-Path $setupAsset)) {
+            throw "Installer release asset not found: $setupAsset"
+          }
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $portableAsset $portableCompatAsset $portableOpenGLAsset $debugAsset --repo $env:GITHUB_REPOSITORY --clobber
+            gh release upload $tag $setupAsset $portableAsset $portableCompatAsset $portableOpenGLAsset $debugAsset --repo $env:GITHUB_REPOSITORY --clobber
           } else {
             $assetNotes = @(
               "Windows assets included in this release:",
               "",
+              "- Installer: signed per-user setup exe. Installs the default Direct3D 11 build to %LOCALAPPDATA%\Programs\WispTerm with a Start menu shortcut and an optional Explorer context menu; the same files as the portable zip, so in-place updates keep working",
               "- Portable: default native Direct3D 11 zip archive containing wispterm.exe",
               "- Portable compat: native Direct3D 11 zip archive for older Windows 10 machines - bundles WebView2Loader.dll for the embedded browser plus a modern ConPTY (conpty.dll + OpenConsole.exe) so TUI apps like Codex and Claude Code get mouse scrolling and scrollbars",
               "- Portable OpenGL fallback: compatibility zip archive for systems where the native D3D11 renderer cannot start or render correctly",
@@ -325,7 +366,7 @@ jobs:
               $notes = $assetNotes
             }
 
-            gh release create $tag $portableAsset $portableCompatAsset $portableOpenGLAsset $debugAsset `
+            gh release create $tag $setupAsset $portableAsset $portableCompatAsset $portableOpenGLAsset $debugAsset `
               --repo $env:GITHUB_REPOSITORY `
               --verify-tag `
               --generate-notes `
