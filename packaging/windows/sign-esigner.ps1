@@ -40,7 +40,10 @@ param(
     # -File.
     [string]$DistRoot,
     # Sign these files in place instead of a dist tree (the setup exe).
-    [string[]]$File = @(),
+    # Not named $File: PowerShell variables are case-insensitive, so a
+    # [string[]] $File parameter would also type the `foreach ($file ...)`
+    # loops below and strip FileInfo down to its path string.
+    [Alias('File')][string[]]$SignFile = @(),
     [switch]$Require,
     [switch]$ListOnly
 )
@@ -496,7 +499,7 @@ function Assert-AuthenticodeSigned {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-$fileMode = @($File).Count -gt 0
+$fileMode = @($SignFile).Count -gt 0
 if ($fileMode -and -not [string]::IsNullOrWhiteSpace($DistRoot)) {
     throw 'Pass either -DistRoot <zig-out/dist> or -File <exe>, not both.'
 }
@@ -511,7 +514,7 @@ if (-not $ListOnly) {
 }
 
 if ($fileMode) {
-    $targets = @(foreach ($path in $File) {
+    $targets = @(foreach ($path in $SignFile) {
         $full = Resolve-DistRoot $path
         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "Sign target not found: $full" }
         if ([IO.Path]::GetExtension($full) -notin @('.exe', '.dll')) { throw "Only .exe and .dll files are signed: $full" }
@@ -522,21 +525,23 @@ if ($fileMode) {
     $targets = @(Get-SignTargets -Root $resolvedRoot)
 }
 
-if ($ListOnly) {
-    $targets | Sort-Object FullName | ForEach-Object { Write-Output $_.FullName }
-    exit 0
-}
-
 $before = @{}
 if ($fileMode) {
-    foreach ($file in $targets) {
-        $before[$file.FullName] = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+    foreach ($target in $targets) {
+        $before[$target.FullName] = (Get-FileHash -Algorithm SHA256 -LiteralPath $target.FullName).Hash
     }
 } else {
     $before = Get-TreeHashes -Root $resolvedRoot
 }
 $targetPaths = @{}
-foreach ($file in $targets) { $targetPaths[$file.FullName] = $true }
+foreach ($target in $targets) { $targetPaths[$target.FullName] = $true }
+
+# After the bookkeeping above, so -ListOnly (which CI runs without secrets)
+# exercises the same target handling as a real signing run.
+if ($ListOnly) {
+    $targets | Sort-Object FullName | ForEach-Object { Write-Output $_.FullName }
+    exit 0
+}
 
 $tempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
 $work = Join-Path $tempRoot ('wispterm-esigner-' + [guid]::NewGuid().ToString('N'))
@@ -549,12 +554,12 @@ try {
     # One sign call per distinct file content: the askpass helper and shell
     # extension are the same bytes in every bundle.
     $groups = [ordered]@{}
-    foreach ($file in ($targets | Sort-Object FullName)) {
-        $hash = $before[$file.FullName]
+    foreach ($target in ($targets | Sort-Object FullName)) {
+        $hash = $before[$target.FullName]
         if (-not $groups.Contains($hash)) {
             $groups[$hash] = New-Object System.Collections.Generic.List[string]
         }
-        $groups[$hash].Add($file.FullName)
+        $groups[$hash].Add($target.FullName)
     }
 
     $tool = Install-CodeSignTool -Destination $toolDir
@@ -591,8 +596,8 @@ try {
 
 $after = @{}
 if ($fileMode) {
-    foreach ($file in $targets) {
-        $after[$file.FullName] = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+    foreach ($target in $targets) {
+        $after[$target.FullName] = (Get-FileHash -Algorithm SHA256 -LiteralPath $target.FullName).Hash
     }
 } else {
     $after = Get-TreeHashes -Root $resolvedRoot
@@ -610,8 +615,8 @@ foreach ($path in @($before.Keys)) {
     }
 }
 
-foreach ($file in $targets) {
-    Assert-AuthenticodeSigned -Path $file.FullName
+foreach ($target in $targets) {
+    Assert-AuthenticodeSigned -Path $target.FullName
 }
 
 Write-Host "Authenticode verification passed for $($targets.Count) files. Zip archives were not signed."
