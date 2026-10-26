@@ -20,6 +20,9 @@ const font_backend = @import("../platform/font_backend.zig");
 const window_backend = @import("../platform/window_backend.zig");
 const agent_detector = @import("../terminal_agents/detector.zig");
 const keybind = @import("../keybind.zig");
+const update_pill_state = @import("../update_pill_state.zig");
+const i18n = @import("../i18n.zig");
+const primitives = @import("overlays/primitives.zig");
 const Character = font.Character;
 
 pub const SIDEBAR_WIDTH: f32 = 220;
@@ -137,6 +140,33 @@ pub fn setSidebarWidth(width: f32, window_width: f32) bool {
 
 fn blend(a: [3]f32, b: [3]f32, t: f32) [3]f32 {
     return titlebar_layout.blend(a, b, t);
+}
+
+/// The Update pill shows only where the in-titlebar buttons do (not macOS,
+/// whose menu bar replaces them) and only while a staged update is ready.
+pub fn updatePillWidth() f32 {
+    if (TITLEBAR_PALETTE_W <= 0) return 0;
+    return update_pill_state.currentWidth();
+}
+
+/// Accent pill with "Update", like Ghostty's UpdatePill. Hover reveals what a
+/// click does; the click itself opens the restart confirmation (input.zig).
+fn renderUpdatePill(x: f32, top_y: f32, w: f32, h: f32) void {
+    const fg = AppWindow.g_theme.foreground;
+    const accent = AppWindow.g_theme.cursor_color;
+    const hovered = mouseInTitlebarRange(h, x, x + w);
+    const pad_x: f32 = 6;
+    const pill_h = @min(h - 10, font.g_titlebar_cell_height + 10);
+    const pill_y = @round(top_y + (h - pill_h) / 2);
+    const pill_w = w - pad_x * 2;
+    primitives.renderRoundedQuadAlpha(x + pad_x, pill_y, pill_w, pill_h, pill_h / 2, accent, if (hovered) 0.34 else 0.22);
+    primitives.renderRoundedQuadAlpha(x + pad_x + 8, pill_y + pill_h / 2 - 3, 6, 6, 3, accent, 0.95);
+
+    const label = i18n.s().update_pill_label;
+    const text_x = x + pad_x + 20;
+    const text_y = top_y + (h - font.g_titlebar_cell_height) / 2;
+    _ = renderTextLimited(label, text_x, text_y, blend(fg, accent, 0.35), pill_w - 26);
+    if (hovered) text_hint.current.offer(i18n.s().update_pill_hint, x, top_y, w, h);
 }
 
 fn titlebarTextWidth(text: []const u8) f32 {
@@ -468,6 +498,7 @@ pub fn renderTitlebar(window_width: f32, window_height: f32, titlebar_h: f32) vo
             TITLEBAR_HELP_W,
             TITLEBAR_COPILOT_W,
             TITLEBAR_PALETTE_W,
+            updatePillWidth(),
             window_backend.caption_button_visual_style.width,
         );
         const top_bg = blend(bg, fg, 0.04);
@@ -534,6 +565,8 @@ pub fn renderTitlebar(window_width: f32, window_height: f32, titlebar_h: f32) vo
             }
             renderTitlebarIcon(.command_palette, .command_palette, palette_x, layout.top_y, TITLEBAR_PALETTE_W, titlebar_h, icon_color);
         }
+
+        if (layout.update_w > 0) renderUpdatePill(layout.update_x, layout.top_y, layout.update_w, titlebar_h);
 
         if (tab.activeTab()) |active_tab| {
             const title = active_tab.getTitle();

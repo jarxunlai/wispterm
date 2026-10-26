@@ -87,6 +87,7 @@ const skill_diff = @import("skill/diff.zig");
 const scp = @import("ssh/scp.zig");
 const ssh_error = @import("ssh/error.zig");
 const i18n = @import("i18n.zig");
+const update_check = @import("update_check.zig");
 pub const tab = @import("appwindow/tab.zig");
 const active_tab_state = @import("appwindow/active_tab.zig");
 const link_open = @import("link_open.zig");
@@ -5937,6 +5938,7 @@ fn renderResizeFrame(width: i32, height: i32) void {
     overlays.renderUpdatePrompt(@floatFromInt(fb_width), @floatFromInt(fb_height));
     overlays.renderWindowCloseConfirm(@floatFromInt(fb_width), @floatFromInt(fb_height));
     overlays.renderRestoreDefaultsConfirm(@floatFromInt(fb_width), @floatFromInt(fb_height));
+    overlays.renderUpdateRestartConfirm(@floatFromInt(fb_width), @floatFromInt(fb_height));
     overlays.renderIntegrationPrompt(@floatFromInt(fb_width), @floatFromInt(fb_height));
     overlays.renderWhatsNew(@floatFromInt(fb_width), @floatFromInt(fb_height));
     titlebar.renderTextHint();
@@ -5964,6 +5966,27 @@ fn resizeWindowToGrid() void {
 fn pollUpdateCheck(app: *App) void {
     const result = app.consumeUpdateResult();
     if (result.state != .idle) overlays.showUpdateCheckResult(result);
+    switch (app.pollInPlaceUpdate()) {
+        .none => {},
+        // The titlebar Update pill just appeared.
+        .ready => applyUiEffect(.repaint),
+        .already_ready => {
+            overlays.showStatusToast(i18n.s().update_pill_hint);
+            applyUiEffect(.repaint);
+        },
+        .stage_failed => overlays.showUpdateCheckResult(.{
+            .state = .download_failed,
+            .release_url = update_check.latest_release_page_url,
+        }),
+        .restart_failed => {
+            overlays.showStatusToast(i18n.s().update_restart_failed);
+            applyUiEffect(.repaint);
+        },
+        // The new version is up and took over; this one bows out. Every
+        // window closes without the running-program prompt (the restart was
+        // confirmed), which on Windows is what ends the app.
+        .quit => app.requestImmediateShutdown(),
+    }
 }
 
 /// UI thread: consume a finished skill-center op result and apply it (open the
@@ -9044,6 +9067,7 @@ fn runMainLoop(self: *AppWindow) !void {
         overlays.renderUpdatePrompt(@floatFromInt(fb_width), @floatFromInt(fb_height));
         overlays.renderWindowCloseConfirm(@floatFromInt(fb_width), @floatFromInt(fb_height));
         overlays.renderRestoreDefaultsConfirm(@floatFromInt(fb_width), @floatFromInt(fb_height));
+        overlays.renderUpdateRestartConfirm(@floatFromInt(fb_width), @floatFromInt(fb_height));
         overlays.renderIntegrationPrompt(@floatFromInt(fb_width), @floatFromInt(fb_height));
         overlays.renderWhatsNew(@floatFromInt(fb_width), @floatFromInt(fb_height));
         titlebar.renderTextHint();

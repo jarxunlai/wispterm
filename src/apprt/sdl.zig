@@ -6,6 +6,7 @@
 //! Task C3: SDL input events are now routed into the neutral input queues so
 //! the terminal is interactive (keyboard, mouse, wheel, file-drop).
 const std = @import("std");
+const update_pill_state = @import("../update_pill_state.zig");
 const builtin = @import("builtin");
 const platform_input = @import("../platform/input_events.zig");
 const platform_window = @import("../platform/window_linux.zig");
@@ -373,6 +374,7 @@ fn hitTest(
     const help_w: i32 = if (builtin.os.tag == .macos) 0 else 46;
     const copilot_w: i32 = if (builtin.os.tag == .macos) 0 else 46;
     const palette_w: i32 = if (builtin.os.tag == .macos) 0 else 46;
+    const update_w: i32 = if (builtin.os.tag == .macos) 0 else @intFromFloat(update_pill_state.currentWidth());
 
     const caption_start = w - cap_w * 3;
     const config_x = caption_start - config_w;
@@ -385,6 +387,8 @@ fn hitTest(
         .{ .x = 0, .y = 0, .w = toggle_w, .h = self.titlebar_height },
         // Command center button (before Copilot)
         .{ .x = palette_x, .y = 0, .w = palette_w, .h = self.titlebar_height },
+        // Update pill (before the command center button; 0 wide when hidden)
+        .{ .x = palette_x - update_w, .y = 0, .w = update_w, .h = self.titlebar_height },
         // Copilot button (before help)
         .{ .x = copilot_x, .y = 0, .w = copilot_w, .h = self.titlebar_height },
         // Help button (before config)
@@ -652,6 +656,7 @@ fn processEvent(event: c.SDL_Event) void {
                     const help_w: i32 = if (builtin.os.tag == .macos) 0 else 46;
                     const copilot_w: i32 = if (builtin.os.tag == .macos) 0 else 46;
                     const palette_w: i32 = if (builtin.os.tag == .macos) 0 else 46;
+                    const update_w: i32 = if (builtin.os.tag == .macos) 0 else @intFromFloat(update_pill_state.currentWidth());
                     const caption_start = lw - cap_w * 3;
                     const config_x = caption_start - config_w;
                     const help_x = config_x - help_w;
@@ -661,6 +666,7 @@ fn processEvent(event: c.SDL_Event) void {
                     const exclusions = [_]window_drag_region.Rect{
                         .{ .x = 0, .y = 0, .w = toggle_w, .h = w.titlebar_height },
                         .{ .x = palette_x, .y = 0, .w = palette_w, .h = w.titlebar_height },
+                        .{ .x = palette_x - update_w, .y = 0, .w = update_w, .h = w.titlebar_height },
                         .{ .x = copilot_x, .y = 0, .w = copilot_w, .h = w.titlebar_height },
                         .{ .x = help_x, .y = 0, .w = help_w, .h = w.titlebar_height },
                         .{ .x = config_x, .y = 0, .w = config_w, .h = w.titlebar_height },

@@ -287,6 +287,9 @@ pub const TopBarLayout = struct {
     help_x: f32,
     copilot_x: f32,
     palette_x: f32,
+    /// Update pill (0 wide unless a staged update is ready).
+    update_x: f32,
+    update_w: f32,
     title_text_x: f32,
     title_text_max_w: f32,
 };
@@ -392,6 +395,7 @@ pub fn topBarLayout(
     help_w: f32,
     copilot_w: f32,
     palette_w: f32,
+    update_w: f32,
     caption_button_w: f32,
 ) TopBarLayout {
     const caption_area_w = caption_button_w * 3.0;
@@ -401,6 +405,7 @@ pub fn topBarLayout(
     const help_x = config_x - help_w;
     const copilot_x = help_x - copilot_w;
     const palette_x = copilot_x - palette_w;
+    const update_x = palette_x - update_w;
     const title_text_x = left_reserved + toggle_w + 10.0;
     return .{
         .top_y = window_height - titlebar_h,
@@ -412,8 +417,10 @@ pub fn topBarLayout(
         .help_x = help_x,
         .copilot_x = copilot_x,
         .palette_x = palette_x,
+        .update_x = update_x,
+        .update_w = update_w,
         .title_text_x = title_text_x,
-        .title_text_max_w = @max(0.0, palette_x - title_text_x - 12.0),
+        .title_text_max_w = @max(0.0, update_x - title_text_x - 12.0),
     };
 }
 
@@ -598,7 +605,7 @@ test "fallbackCodepoint maps printable ASCII, else '?'" {
 }
 
 test "topBarLayout computes titlebar chrome rectangles" {
-    const l = topBarLayout(1200, 800, 34, 0, 46, 46, 46, 46, 46, 46);
+    const l = topBarLayout(1200, 800, 34, 0, 46, 46, 46, 46, 46, 0, 46);
 
     try std.testing.expectEqual(@as(f32, 766), l.top_y);
     try std.testing.expectEqual(@as(f32, 0), l.toggle_x);
@@ -616,7 +623,7 @@ test "topBarLayout computes titlebar chrome rectangles" {
 }
 
 test "topBarLayout collapses optional titlebar controls cleanly" {
-    const l = topBarLayout(360, 240, 40, 160, 46, 0, 0, 0, 0, 46);
+    const l = topBarLayout(360, 240, 40, 160, 46, 0, 0, 0, 0, 0, 46);
 
     try std.testing.expectEqual(@as(f32, 200), l.top_y);
     try std.testing.expectEqual(@as(f32, 160), l.toggle_x);
@@ -629,6 +636,15 @@ test "topBarLayout collapses optional titlebar controls cleanly" {
     try std.testing.expectEqual(@as(f32, 222), l.palette_x);
     try std.testing.expectEqual(@as(f32, 216), l.title_text_x);
     try std.testing.expectEqual(@as(f32, 0), l.title_text_max_w);
+}
+
+test "topBarLayout puts the update pill left of the command center button" {
+    const l = topBarLayout(1200, 800, 34, 0, 46, 46, 46, 46, 46, 84, 46);
+    try std.testing.expectEqual(@as(f32, 878), l.palette_x);
+    try std.testing.expectEqual(@as(f32, 794), l.update_x);
+    try std.testing.expectEqual(@as(f32, 84), l.update_w);
+    // The title gives the pill its room.
+    try std.testing.expectEqual(@as(f32, 726), l.title_text_max_w);
 }
 
 test "captionButtonRects keeps minimize maximize close ordered at window edge" {

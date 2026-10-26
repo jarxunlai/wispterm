@@ -198,17 +198,24 @@ reopen the pre-switch conversation even if the summary request fails.
 
 ## How Do I Update WispTerm?
 
-By default WispTerm checks GitHub Releases shortly after startup and shows a
-clickable prompt when a newer version is available (set `auto-update-check =
-false` to disable that startup check). You can also update on demand from the
-command center:
+By default (`auto-update = download`) WispTerm checks GitHub Releases shortly
+after startup. On Windows, a signed portable install downloads and verifies the
+new version in the background, then shows an **Update** button in the titlebar.
+Click it to restart into the new version, or simply quit later: the update
+installs on exit and the next launch runs it. Set `auto-update = check` to only
+be told about new versions, or `auto-update = off` to turn the check off. You
+can also update on demand from the command center:
 
 - **Check for Updates** — query GitHub Releases for a newer version.
-- **Download Update** — download the latest release to your Downloads folder.
+- **Download Update** — download the latest release: staged for the titlebar
+  **Update** button on a signed Windows portable install, otherwise saved to your
+  Downloads folder.
 - **Open Latest Release** — open the latest WispTerm GitHub Release page in a
   browser.
 
-Unzip the downloaded zip and double-click **`Replace-WispTerm.cmd`** to replace
+When the update is not installed in place (macOS, a dev build, or a folder
+WispTerm cannot write to), unzip the downloaded zip and double-click
+**`Replace-WispTerm.cmd`** to replace
 the Start-menu install (or install into `%LOCALAPPDATA%\Programs\WispTerm` if
 no shortcut exists yet). After upgrading, run **What's New** from the command
 center (it also pops up automatically the first time you launch a new version)

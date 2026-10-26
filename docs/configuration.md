@@ -41,7 +41,7 @@ background-image = C:\Users\me\Pictures\wallpaper.png   # Windows example; use /
 background-opacity = 0.85
 background-image-mode = fill
 config-file = extra.conf
-auto-update-check = true
+auto-update = download
 focus-follows-mouse = false
 remote-enabled = false
 remote-server-url = https://remote.example.com
@@ -77,7 +77,8 @@ feishu-app-secret = your-app-secret
 | `scrollback-limit`          | `10000000` | Scrollback buffer limit in bytes                                                                                                                                                                                        |
 | `url-open-mode`             | `embedded` | Where web URLs open: `embedded` uses the right-side browser panel when available (WebView2 on Windows, WKWebView on macOS), while `system-browser` always opens the system default browser. SSH loopback URLs keep local port forwards alive for either mode. |
 | `restore-tabs-on-startup`   | `false`    | Persist tab/split layout and replayable Pi JSONL session paths to the platform config directory (`session.json`) on close and rebuild them on next launch. SSH passwords are never persisted; reconnects re-prompt. CLI overrides (`--working-directory`) take precedence and skip restore. |
-| `auto-update-check`         | `true`     | Check GitHub Releases after startup and show a clickable prompt when a newer version is available. Set to `false` to disable startup checks.                                                                             |
+| `auto-update`               | `download` | Same key and values as Ghostty. `off`: never check by itself. `check`: check GitHub Releases after startup and show a prompt when a newer version is out. `download`: also download and verify it in the background. On a signed Windows portable install, the titlebar then shows an **Update** button that restarts into the new version (after a confirmation), and quitting installs it, so the next launch runs it. Elsewhere `download` behaves like `check`. |
+| `auto-update-check`         | `true`     | Older spelling: `false` turns updates off, like `auto-update = off`.                                                                                                                                                     |
 | `config-file`               | *(none)*   | Include another config file (prefix with `?` to make optional)                                                                                                                                                          |
 | `ai-default-profile`        | *(none)*   | Saved AI profile name used by New Agent, startup auto-open, remote auto-open, and Copilot defaults. Empty falls back to the first saved profile. `/model` changes only the current session and does not rewrite this key. |
 | `http-use-system-proxy`     | `false`    | Enable the AI Proxy setting for model/provider HTTP. Leave off to connect AI requests directly. |
