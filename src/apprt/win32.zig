@@ -936,6 +936,8 @@ pub const Window = struct {
     /// popup is hidden.
     ime_preedit_buf: [1024]u8 = undefined,
     ime_preedit_len: usize = 0,
+    /// Set when the preedit text changes; consumed by takeImePreeditChanged.
+    ime_preedit_changed: bool = false,
     ime_composing: bool = false,
 
     // Input event queues (written by WndProc, read by main loop)
@@ -973,9 +975,30 @@ pub const Window = struct {
         return self.ime_preedit_buf[0..self.ime_preedit_len];
     }
 
+    /// Replace the inline preedit, flagging a change only when the text differs
+    /// so a repeated WM_IME_COMPOSITION does not force an extra frame.
+    fn setImePreedit(self: *Window, text: []const u8) void {
+        const len = @min(text.len, self.ime_preedit_buf.len);
+        if (!std.mem.eql(u8, text[0..len], self.imePreeditText())) {
+            @memcpy(self.ime_preedit_buf[0..len], text[0..len]);
+            self.ime_preedit_len = len;
+            self.ime_preedit_changed = true;
+        }
+        self.ime_composing = len > 0;
+    }
+
     pub fn clearImePreedit(self: *Window) void {
-        self.ime_preedit_len = 0;
-        self.ime_composing = false;
+        self.setImePreedit("");
+    }
+
+    /// One-shot: true when the preedit changed since the last call. The
+    /// preedit is painted by the render loop, and an active IME composition
+    /// swallows the raw keys (they arrive as VK_PROCESSKEY, which paints
+    /// nothing), so the loop must repaint for it (issue #691).
+    pub fn takeImePreeditChanged(self: *Window) bool {
+        const changed = self.ime_preedit_changed;
+        self.ime_preedit_changed = false;
+        return changed;
     }
 
     pub fn clearTransientInputQueues(self: *Window) void {
@@ -1673,6 +1696,34 @@ test "win32 IME composition handles result and preedit flags independently" {
     try std.testing.expect(!result_only.update_preedit);
 }
 
+test "win32 IME preedit change is a one-shot repaint signal (issue #691)" {
+    var w: Window = .{ .hwnd = undefined, .hdc = undefined };
+    try std.testing.expect(!w.takeImePreeditChanged());
+
+    // Each new pinyin keystroke rewrites the preedit with no key event the
+    // input loop can paint from, so the change itself must ask for a frame.
+    w.setImePreedit("n");
+    try std.testing.expectEqualStrings("n", w.imePreeditText());
+    try std.testing.expect(w.ime_composing);
+    try std.testing.expect(w.takeImePreeditChanged());
+    try std.testing.expect(!w.takeImePreeditChanged());
+
+    w.setImePreedit("ni");
+    try std.testing.expect(w.takeImePreeditChanged());
+
+    // An identical repeat (e.g. a caret-only WM_IME_COMPOSITION) is not a change.
+    w.setImePreedit("ni");
+    try std.testing.expect(!w.takeImePreeditChanged());
+
+    // Committing or cancelling erases the inline preedit, which also repaints.
+    w.clearImePreedit();
+    try std.testing.expectEqualStrings("", w.imePreeditText());
+    try std.testing.expect(!w.ime_composing);
+    try std.testing.expect(w.takeImePreeditChanged());
+    w.clearImePreedit();
+    try std.testing.expect(!w.takeImePreeditChanged());
+}
+
 test "win32 IME caret sync dedup includes normalized caret and client size" {
     const caret = normalizeImeCaret(-4, 12, 0);
     try std.testing.expectEqual(@as(i32, 0), caret.x);
@@ -1732,12 +1783,13 @@ fn updateImePreeditString(w: *Window) void {
         return;
     }
 
-    const utf8_len = std.unicode.utf16LeToUtf8(&w.ime_preedit_buf, wide_buf[0..units]) catch {
+    // Decode beside the live buffer so setImePreedit can tell whether it changed.
+    var utf8_buf: @TypeOf(w.ime_preedit_buf) = undefined;
+    const utf8_len = std.unicode.utf16LeToUtf8(&utf8_buf, wide_buf[0..units]) catch {
         w.clearImePreedit();
         return;
     };
-    w.ime_preedit_len = utf8_len;
-    w.ime_composing = utf8_len > 0;
+    w.setImePreedit(utf8_buf[0..utf8_len]);
 }
 
 fn pushImeUtf16Chars(w: *Window, chars: []const WCHAR) void {
@@ -2031,8 +2083,8 @@ fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.wina
             return DefWindowProcW(hwnd, msg, wParam, filteredImeSetContextLParam(lParam));
         },
         WM_IME_STARTCOMPOSITION => {
+            w.clearImePreedit();
             w.ime_composing = true;
-            w.ime_preedit_len = 0;
             updateImeWindowPosition(w);
             return 0;
         },
