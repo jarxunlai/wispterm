@@ -134,6 +134,7 @@ extern fn wispterm_macos_window_copy_ime_preedit(handle: NativeHandle, out: [*]u
 extern fn wispterm_macos_window_set_ime_caret(handle: NativeHandle, x: i32, y: i32, height: i32) void;
 extern fn wispterm_macos_window_test_push_key(handle: NativeHandle, key_code: usize, ctrl: bool, shift: bool, alt: bool) void;
 extern fn wispterm_macos_window_test_map_key_code(native_key_code: u16, characters_utf8: ?[*:0]const u8) usize;
+extern fn wispterm_macos_window_test_perform_key_equivalent(handle: NativeHandle, characters_utf8: [*:0]const u8, native_key_code: u16, shift: bool, alt: bool) bool;
 extern fn wispterm_macos_window_test_push_char(handle: NativeHandle, codepoint: u32, ctrl: bool, shift: bool, alt: bool) void;
 extern fn wispterm_macos_window_test_insert_text_after_key(handle: NativeHandle, codepoint: u32, ctrl: bool, shift: bool, alt: bool) void;
 extern fn wispterm_macos_window_test_push_mouse_button(handle: NativeHandle, button: u8, action: u8, x: i32, y: i32, ctrl: bool, shift: bool, alt: bool) void;
@@ -437,6 +438,35 @@ test "macOS backend drains translated key events" {
     try std.testing.expect(ev.ctrl);
     try std.testing.expect(!ev.shift);
     try std.testing.expect(ev.alt);
+}
+
+fn ignoreMenuAction(_: @import("../keybind.zig").Action) void {}
+
+// ⌘Q used to do nothing while a terminal window had focus: the content view
+// claimed every ⌘ key for the keybinds, so AppKit never offered it to the main
+// menu's Quit item. WispTermAppDelegate answers terminate: with Cancel and
+// closes the windows itself, so the real Quit path is safe to drive here.
+test "macOS ⌘Q in a focused window quits through the menu; ⌘C still reaches the keybinds" {
+    const title = std.unicode.utf8ToUtf16LeStringLiteral("WispTerm Quit Shortcut");
+    var window = try Window.init(320, 180, title, null, null, false);
+    defer window.deinit();
+    @import("menu_macos.zig").install(ignoreMenuAction);
+    _ = window.pollEvents();
+    _ = window_macos.consumeQuitRequest();
+
+    // kVK_ANSI_C = 8: Copy is a WispTerm keybind, so it is pushed as a key event.
+    try std.testing.expect(wispterm_macos_window_test_perform_key_equivalent(window.hwnd, "c", 8, false, false));
+    try std.testing.expect(window.pollEvents());
+    const copy = window.key_events.pop() orelse return error.ExpectedKeyEvent;
+    try std.testing.expectEqual(@as(usize, 'C'), copy.key_code);
+    try std.testing.expect(copy.super);
+    try std.testing.expect(!window_macos.consumeQuitRequest());
+
+    // kVK_ANSI_Q = 12: Quit runs terminate:, which closes our window instead.
+    try std.testing.expect(wispterm_macos_window_test_perform_key_equivalent(window.hwnd, "q", 12, false, false));
+    try std.testing.expect(window_macos.consumeQuitRequest());
+    try std.testing.expect(!window.pollEvents());
+    try std.testing.expect(window.key_events.pop() == null);
 }
 
 test "macOS backend normalizes control-modified shortcut key codes" {

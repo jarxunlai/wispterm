@@ -155,6 +155,10 @@ struct WispTermMacWindowState {
 static void wispterm_macos_worker_wakeup_signal(void);
 void wispterm_macos_post_wakeup(void);
 
+// menu_macos_bridge.m: performs ⌘Q / ⌘H / ⌥⌘H through the main menu's system
+// items, which have no WispTerm keybind.
+bool wispterm_macos_menu_perform_system_key_equivalent(NSEvent *event);
+
 // -[NSWindow isZoomed] is not a cheap getter: AppKit recomputes the window's
 // standard frame on every call (-_standardFrameForScreen: walks the drawers
 // into fresh autoreleased NSArrays). The render loop and titlebar used to ask
@@ -956,6 +960,10 @@ static void wispterm_macos_set_preedit(WispTermMacWindowState *state, id string_
     // emitting the unhandled-shortcut system beep.
     if ((event.modifierFlags & NSEventModifierFlagCommand) == 0) return NO;
     if (self.state == NULL) return NO;
+    // Quit / Hide / Hide Others have no WispTerm keybind; claiming them here
+    // would keep AppKit from offering them to the main menu (see
+    // menu_macos_bridge.m).
+    if (wispterm_macos_menu_perform_system_key_equivalent(event)) return YES;
     NSString *characters = wispterm_macos_key_characters(event);
     uintptr_t key_code = wispterm_macos_map_key_code(event.keyCode, characters);
     wispterm_macos_push_key_event(self.state, wispterm_macos_key_event(key_code, event.modifierFlags));
@@ -1482,6 +1490,28 @@ void wispterm_macos_window_test_push_key(void *handle, uintptr_t key_code, bool 
         .shift = shift,
         .alt = alt,
     });
+}
+
+// Offers a synthetic key-down to the content view's -performKeyEquivalent:,
+// the hop NSWindow makes for every ⌘ key before the main menu sees it.
+// Returns whether the view claimed the event.
+bool wispterm_macos_window_test_perform_key_equivalent(void *handle, const char *characters_utf8, uint16_t native_key_code, bool shift, bool alt) {
+    WispTermMacWindowState *state = wispterm_macos_state(handle);
+    if (state == NULL || state->view == nil || characters_utf8 == NULL) return false;
+    @autoreleasepool {
+        NSString *characters = [NSString stringWithUTF8String:characters_utf8];
+        NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown
+                                          location:NSZeroPoint
+                                     modifierFlags:wispterm_macos_flags_from_bools(false, shift, alt, true)
+                                         timestamp:0
+                                      windowNumber:state->window.windowNumber
+                                           context:nil
+                                        characters:characters
+                       charactersIgnoringModifiers:characters
+                                         isARepeat:NO
+                                           keyCode:native_key_code];
+        return [state->view performKeyEquivalent:event] ? true : false;
+    }
 }
 
 uintptr_t wispterm_macos_window_test_map_key_code(uint16_t native_key_code, const char *characters_utf8) {
