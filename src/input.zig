@@ -94,7 +94,8 @@ const pasteClipboardIntoMcpForm = clipboard.pasteClipboardIntoMcpForm;
 const pasteClipboardIntoPasswordStore = clipboard.pasteClipboardIntoPasswordStore;
 const pasteClipboardIntoSyncPage = clipboard.pasteClipboardIntoSyncPage;
 const pasteFromClipboardIntoAiChat = clipboard.pasteFromClipboardIntoAiChat;
-const pasteImageIntoAiChat = clipboard.pasteImageIntoAiChat;
+const pasteImageOrTextIntoAiChat = clipboard.pasteImageOrTextIntoAiChat;
+const pasteImageOrTextIntoTerminal = clipboard.pasteImageOrTextIntoTerminal;
 pub const pasteImageFromClipboard = clipboard.pasteImageFromClipboard;
 pub const writeTextToActivePty = clipboard.writeTextToActivePty;
 pub const writeTextToSurfacePty = clipboard.writeTextToSurfacePty;
@@ -1773,7 +1774,7 @@ test "input: file explorer keyboard navigation requests a repaint" {
     file_explorer.g_entry_count = 10;
     file_explorer.g_selected = 0;
 
-    AppWindow.g_force_rebuild = false;
+    resetInputRepaintForTest();
 
     // Bare Down arrow advances the selection (no modifier → not a keybind).
     handleKey(.{ .key_code = platform_input.key_down, .ctrl = false, .shift = false, .alt = false, .super = false });
@@ -3227,9 +3228,9 @@ fn executeCommand(cmd: command_dispatch.Command) bool {
         },
         .paste_image => {
             if (assistant_conversation.current(aiCopilotFocused())) |target| {
-                if (!pasteImageIntoAiChat(target.session)) pasteFromClipboardIntoAiChat(target.session);
+                pasteImageOrTextIntoAiChat(target.session);
             } else {
-                if (!pasteImageFromClipboard()) pasteFromClipboard();
+                pasteImageOrTextIntoTerminal();
             }
         },
         // Panel-focus shortcuts are "performable": if there is no pane in
@@ -3373,7 +3374,7 @@ fn dispatchKey(ev: platform_input.KeyEvent) ui_effect.UiEffect {
             return input_effects.repaint();
         }
         if (actionIs(action, .paste_image)) {
-            if (!pasteImageIntoAiChat(session)) pasteFromClipboardIntoAiChat(session);
+            pasteImageOrTextIntoAiChat(session);
             return input_effects.repaint();
         }
         const mod = ev.ctrl or ev.super;
