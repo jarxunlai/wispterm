@@ -1137,6 +1137,13 @@ pub fn build(b: *std.Build) void {
             .flags = &.{},
             .language = .objective_c,
         });
+        // The content view offers ⌘ keys to the menu bridge's system items
+        // (Quit/Hide) before forwarding them, so the window bridge links it.
+        macos_window_test_mod.addCSourceFile(.{
+            .file = b.path("src/platform/menu_macos_bridge.m"),
+            .flags = &.{},
+            .language = .objective_c,
+        });
         macos_window_test_mod.linkFramework("AppKit", .{});
         macos_window_test_mod.linkFramework("Foundation", .{});
         macos_window_test_mod.linkFramework("Metal", .{});
